@@ -1,0 +1,23 @@
+@import 'tailwindcss' reference;
+
+@layer components {
+  .page-background {
+    @apply fixed inset-0 -z-10 overflow-hidden pointer-events-none;
+  }
+
+  .page-background__scene {
+    @apply relative size-full;
+  }
+
+  .page-background__background-image {
+    @apply absolute inset-0 block size-full object-cover object-center;
+  }
+
+  .page-background__layer {
+    @apply absolute inset-0 will-change-transform motion-reduce:will-change-auto motion-reduce:!transform-none;
+  }
+
+  .page-background__fallback {
+    @apply bg-[var(--bg)];
+  }
+}
