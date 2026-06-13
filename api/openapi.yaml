@@ -1,0 +1,1189 @@
+openapi: 3.1.0
+
+info:
+  title: Travel-Planning Agent — Frontend API
+  version: 1.0.0
+  license:
+    name: UNLICENSED
+  description: |
+    HTTP + SSE contract between the Vue 3 chat frontend and the travel-planning agent backend.
+
+    The agent picks optimal flights / hotels / tours for a travel group given budget, constraints
+    and preferences, asks closed clarifying questions when needed, renders visited settlements as
+    map points, and rebuilds the plan when the user edits the route.
+
+    **Design reference:** `docs/superpowers/specs/2026-06-13-travel-agent-api-design.md`
+    **Module spec:** `api/SPECIFICATION.md`
+
+    ## Conventions
+    - **Auth:** HTTP `Bearer` JWT (access token) on every endpoint except
+      `register` / `login` / `refresh` and the SSE stream (which uses a one-time `ticket`).
+    - **Real-time:** a chat message creates an async *run*; the run's events are delivered over
+      Server-Sent Events (`text/event-stream`). Reconnect with the `Last-Event-ID` header.
+    - **Money:** integer `*_rub` fields are whole rubles, matching the dataset.
+    - **IDs:** opaque strings (UUIDs for new entities; seeded groups keep `G-0001`-style ids).
+    - **Timestamps:** RFC 3339 UTC, except flight `departure_time`/`arrival_time` which are local
+      `HH:MM` time-of-day strings (as stored in `flights.csv`).
+    - **Errors:** every non-2xx response uses the `Error` envelope.
+    - **Booleans:** `*_included` / `free_cancellation` are exposed as JSON booleans even though the
+      backing CSVs store them as `0`/`1`.
+
+    ## Out of scope (v1)
+    `eval/*` and `debug/*` ops endpoints, plan versioning/history, and the agent's internal
+    tools/prompts and SQLite schema — covered by separate specs owned by the backend.
+
+servers:
+  - url: /api/v1
+    description: Versioned base path
+
+tags:
+  - name: Auth
+    description: Registration, login, token refresh, current user
+  - name: Chat
+    description: Send a message (creates a run), stream run events over SSE, cancel a run
+  - name: Sessions
+    description: Chat list and full message history
+  - name: Groups
+    description: Reusable travel-party / trip context and its members & preferences
+  - name: Plans
+    description: The built route — fetch, accept, reject, modify, map, calendar
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ───────────────────────────── Auth ─────────────────────────────
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user (auto-login)
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        '201':
+          description: Created and logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegisterResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in with email + password
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Exchange a refresh token for a new access token (refresh rotated)
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '200':
+          description: New access token (and rotated refresh token)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccessTokenResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke a refresh token
+      operationId: logout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        '204': { description: Refresh token revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current authenticated user
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: The current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  # ───────────────────────────── Chat / Run ─────────────────────────────
+  /chat:
+    post:
+      tags: [Chat]
+      summary: Send a message or answer a clarifying question (creates a run)
+      operationId: postChat
+      description: |
+        Starts a new agent turn (*run*). Omit `session_id` to start a new chat.
+
+        Provide **either** `message`, **or** an answer to a clarifying question
+        (`in_reply_to_question_id` plus `selected_option_ids` and/or `freeform`).
+
+        The response returns immediately with a `run_id`; subscribe to results by minting a
+        stream ticket (`POST /chat/{run_id}/stream-ticket`) and opening the SSE stream.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChatRequest' }
+      responses:
+        '202':
+          description: Run accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChatAccepted' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /chat/{run_id}/stream-ticket:
+    post:
+      tags: [Chat]
+      summary: Mint a short-lived, single-use ticket for the SSE stream
+      operationId: createStreamTicket
+      description: |
+        Browser `EventSource` cannot set an `Authorization` header, so the SSE stream is authorized
+        by a short-lived, single-use, run-scoped ticket minted here with the normal Bearer token.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '200':
+          description: Stream ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StreamTicket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /chat/{run_id}/stream:
+    get:
+      tags: [Chat]
+      summary: Stream run events (Server-Sent Events)
+      operationId: streamRun
+      security:
+        - streamTicket: []
+      description: |
+        Opens a `text/event-stream`. Authorized by the `ticket` query parameter (see
+        `stream-ticket`). Each SSE frame has an `event:` name and a JSON `data:` payload, and
+        carries an `id:` so a dropped connection can resume via the `Last-Event-ID` request header.
+        The stream closes when a terminal `run_status` (`completed` / `cancelled` / `error`) is sent.
+
+        **Event names → data schema:**
+        | `event:` | `data:` schema |
+        |---|---|
+        | `run_status` | `RunStatusEvent` |
+        | `message_delta` | `MessageDeltaEvent` |
+        | `message` | `MessageEvent` |
+        | `clarifying_question` | `ClarifyingQuestionEvent` |
+        | `plan_status` | `PlanStatusEvent` |
+        | `map` | `MapEvent` |
+        | `error` | `ErrorEvent` |
+
+        While `plan_status` is not `ready`, the frontend keeps the map read-only.
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+        - name: ticket
+          in: query
+          required: true
+          description: One-time stream ticket from `POST /chat/{run_id}/stream-ticket`.
+          schema: { type: string }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Resume the stream after this event id (set automatically by `EventSource`).
+          schema: { type: string }
+      responses:
+        '200':
+          description: |
+            An event stream. The schema below documents the union of possible `data:` payloads;
+            use the `event:` name to discriminate (see the table above).
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/SseEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /chat/{run_id}/cancel:
+    post:
+      tags: [Chat]
+      summary: Cancel an in-flight run
+      operationId: cancelRun
+      parameters:
+        - $ref: '#/components/parameters/RunId'
+      responses:
+        '202':
+          description: Cancellation requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CancelResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Run already finished
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # ───────────────────────────── Sessions ─────────────────────────────
+  /sessions:
+    get:
+      tags: [Sessions]
+      summary: List the user's chats (each with a short summary of the first request)
+      operationId: listSessions
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Paginated chat list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /sessions/{session_id}:
+    get:
+      tags: [Sessions]
+      summary: Full message history of a chat
+      operationId: getSession
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: The chat with its ordered messages and plan summaries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────── Groups ─────────────────────────────
+  /groups:
+    get:
+      tags: [Groups]
+      summary: List the user's travel groups
+      operationId: listGroups
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Paginated group list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Groups]
+      summary: Create a travel group describing all participants
+      operationId: createGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateGroupRequest' }
+      responses:
+        '201':
+          description: Created group (members embedded)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /groups/{group_id}:
+    get:
+      tags: [Groups]
+      summary: Get a group with its members embedded
+      operationId: getGroup
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: The group
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group_id}/members:
+    get:
+      tags: [Groups]
+      summary: List a group's members
+      operationId: getGroupMembers
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: Members of the group
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MemberList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group_id}/preferences:
+    get:
+      tags: [Groups]
+      summary: Preferences of every member of a group
+      operationId: getGroupPreferences
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: Preferences grouped by member
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupPreferences' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group_id}/plans:
+    get:
+      tags: [Groups]
+      summary: Plans built for a group
+      operationId: getGroupPlans
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+      responses:
+        '200':
+          description: Plan summaries for the group
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ───────────────────────────── Plans ─────────────────────────────
+  /plans/{plan_id}:
+    get:
+      tags: [Plans]
+      summary: Get a plan (the built route and its selected flight/hotel/tour)
+      operationId: getPlan
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: The plan
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /plans/{plan_id}/accept:
+    post:
+      tags: [Plans]
+      summary: Accept a ready plan
+      operationId: acceptPlan
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: Plan accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/PlanNotReady' }
+
+  /plans/{plan_id}/reject:
+    post:
+      tags: [Plans]
+      summary: Reject a plan (terminal)
+      operationId: rejectPlan
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectRequest' }
+      responses:
+        '200':
+          description: Plan rejected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plan' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /plans/{plan_id}/modify:
+    post:
+      tags: [Plans]
+      summary: Correct the route — add/remove map points as a batch and rebuild
+      operationId: modifyPlan
+      description: |
+        Allowed only while the plan is `ready`. Submits the user's batch of added/removed map points
+        (plus an optional note); the plan flips back to `building` and the agent rebuilds. Subscribe
+        to the **new** run's stream (`run_id` in the response) for the rebuild events.
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ModifyRequest' }
+      responses:
+        '202':
+          description: Rebuild started on a new run
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModifyAccepted' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/PlanNotReady' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /plans/{plan_id}/map:
+    get:
+      tags: [Plans]
+      summary: Map points for a plan (with the editable gate)
+      operationId: getPlanMap
+      description: |
+        `editable` is `true` only when `status == ready`; the frontend uses it to gate route editing.
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: Map snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanMap' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /plans/{plan_id}/calendar:
+    get:
+      tags: [Plans]
+      summary: Calendar (itinerary) for a plan
+      operationId: getPlanCalendar
+      parameters:
+        - $ref: '#/components/parameters/PlanId'
+      responses:
+        '200':
+          description: Calendar events
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanCalendar' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token (`sub = user_id`, ~15 min lifetime).
+    streamTicket:
+      type: apiKey
+      in: query
+      name: ticket
+      description: Single-use, run-scoped ticket for the SSE stream (~60 s lifetime).
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema: { type: integer, minimum: 0, default: 0 }
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema: { type: string }
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema: { type: string }
+    GroupId:
+      name: group_id
+      in: path
+      required: true
+      schema: { type: string }
+    PlanId:
+      name: plan_id
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid token, or token expired
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Authenticated but not allowed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Unknown resource
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Conflict (e.g. email already registered)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    PlanNotReady:
+      description: Modify/accept attempted while the plan is not `ready`
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Malformed or invalid body/params
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    # ── Errors ──
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - validation_error
+                - unauthorized
+                - token_expired
+                - forbidden
+                - not_found
+                - conflict
+                - plan_not_ready
+                - rate_limited
+                - internal
+            message: { type: string, description: Human-readable explanation }
+            details:
+              type: object
+              additionalProperties: true
+              description: Optional machine-readable detail (e.g. per-field errors).
+
+    # ── Auth ──
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, format: password, minLength: 8 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+    User:
+      type: object
+      required: [id, name, email, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string, format: email }
+        created_at: { type: string, format: date-time }
+    TokenBundle:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer, description: Access-token lifetime in seconds }
+    RegisterResponse:
+      type: object
+      required: [user, tokens]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        tokens: { $ref: '#/components/schemas/TokenBundle' }
+    LoginResponse:
+      allOf:
+        - $ref: '#/components/schemas/TokenBundle'
+        - type: object
+          required: [user]
+          properties:
+            user: { $ref: '#/components/schemas/User' }
+    AccessTokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token]
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, const: Bearer }
+        expires_in: { type: integer }
+        refresh_token: { type: string, description: Rotated refresh token }
+
+    # ── Chat / Run ──
+    ChatRequest:
+      type: object
+      description: |
+        Provide `message`, OR answer a clarifying question with `in_reply_to_question_id` plus
+        `selected_option_ids` and/or `freeform`.
+      properties:
+        session_id:
+          type: string
+          description: Omit to start a new chat (session).
+        message: { type: string, description: User text }
+        group_id:
+          type: string
+          description: Selected travel-group context; attached to the resulting plan.
+        in_reply_to_question_id:
+          type: string
+          description: Set when answering a clarifying question.
+        selected_option_ids:
+          type: array
+          items: { type: string }
+          description: Chosen closed-answer option id(s).
+        freeform:
+          type: string
+          description: Freeform answer when the offered options don't fit.
+    ChatAccepted:
+      type: object
+      required: [run_id, session_id]
+      properties:
+        run_id: { type: string }
+        session_id: { type: string }
+    StreamTicket:
+      type: object
+      required: [ticket, expires_in]
+      properties:
+        ticket: { type: string }
+        expires_in: { type: integer, description: Ticket lifetime in seconds, example: 60 }
+    CancelResponse:
+      type: object
+      required: [run_id, status]
+      properties:
+        run_id: { type: string }
+        status: { type: string, const: cancelling }
+
+    # ── SSE events ──
+    RunStatus:
+      type: string
+      enum: [started, running, completed, cancelled, error]
+    PlanBuildStatus:
+      type: string
+      enum: [building, ready, error]
+    MapPoint:
+      type: object
+      required: [id, name, kind, lat, lng, order]
+      properties:
+        id: { type: string }
+        name: { type: string, description: Settlement / point label }
+        kind: { type: string, enum: [origin, destination, stop] }
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        order: { type: integer, description: Position along the route (0-based) }
+        note: { type: string }
+    QuestionOption:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+    ClarifyingQuestion:
+      type: object
+      required: [id, text, options, allow_freeform]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        options:
+          type: array
+          description: Mutually exclusive closed-answer options.
+          items: { $ref: '#/components/schemas/QuestionOption' }
+        allow_freeform:
+          type: boolean
+          description: Whether a freeform answer is accepted when no option fits.
+    RunStatusEvent:
+      type: object
+      required: [run_id, status]
+      properties:
+        run_id: { type: string }
+        status: { $ref: '#/components/schemas/RunStatus' }
+    MessageDeltaEvent:
+      type: object
+      required: [run_id, message_id, delta]
+      properties:
+        run_id: { type: string }
+        message_id: { type: string }
+        delta: { type: string, description: Streamed assistant text chunk }
+    MessageEvent:
+      type: object
+      required: [run_id, message]
+      properties:
+        run_id: { type: string }
+        message: { $ref: '#/components/schemas/Message' }
+    ClarifyingQuestionEvent:
+      type: object
+      required: [run_id, question]
+      properties:
+        run_id: { type: string }
+        question: { $ref: '#/components/schemas/ClarifyingQuestion' }
+    PlanStatusEvent:
+      type: object
+      required: [run_id, plan_id, status]
+      properties:
+        run_id: { type: string }
+        plan_id: { type: string }
+        status: { $ref: '#/components/schemas/PlanBuildStatus' }
+        error: { type: string, description: Present when status is error }
+    MapEvent:
+      type: object
+      required: [run_id, plan_id, points]
+      description: Full map snapshot (not a delta).
+      properties:
+        run_id: { type: string }
+        plan_id: { type: string }
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/MapPoint' }
+    ErrorEvent:
+      type: object
+      required: [run_id, error]
+      properties:
+        run_id: { type: string }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+    SseEvent:
+      description: |
+        Union of possible SSE `data:` payloads. Discriminate on the SSE `event:` name (see the
+        stream operation's description), not on a body field.
+      oneOf:
+        - $ref: '#/components/schemas/RunStatusEvent'
+        - $ref: '#/components/schemas/MessageDeltaEvent'
+        - $ref: '#/components/schemas/MessageEvent'
+        - $ref: '#/components/schemas/ClarifyingQuestionEvent'
+        - $ref: '#/components/schemas/PlanStatusEvent'
+        - $ref: '#/components/schemas/MapEvent'
+        - $ref: '#/components/schemas/ErrorEvent'
+
+    # ── Sessions ──
+    Answer:
+      type: object
+      required: [in_reply_to_question_id]
+      description: A user reply to a clarifying question.
+      properties:
+        in_reply_to_question_id: { type: string }
+        selected_option_ids:
+          type: array
+          items: { type: string }
+        freeform: { type: string }
+    PlanRef:
+      type: object
+      required: [plan_id, status]
+      properties:
+        plan_id: { type: string }
+        status: { $ref: '#/components/schemas/PlanStatus' }
+    Message:
+      type: object
+      required: [id, role, content, created_at]
+      properties:
+        id: { type: string }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        created_at: { type: string, format: date-time }
+        run_id: { type: string }
+        question:
+          allOf: [{ $ref: '#/components/schemas/ClarifyingQuestion' }]
+          description: Present on an assistant message that asks a clarifying question.
+        answer:
+          allOf: [{ $ref: '#/components/schemas/Answer' }]
+          description: Present on a user message that answers a clarifying question.
+        plan_ref:
+          allOf: [{ $ref: '#/components/schemas/PlanRef' }]
+          description: Present on an assistant message that (re)built a plan.
+    PlanSummary:
+      type: object
+      required: [plan_id, status]
+      properties:
+        plan_id: { type: string }
+        status: { $ref: '#/components/schemas/PlanStatus' }
+        destination: { type: string }
+        estimated_total_rub: { type: integer }
+        created_at: { type: string, format: date-time }
+    SessionSummary:
+      type: object
+      required: [id, summary, created_at, updated_at]
+      properties:
+        id: { type: string }
+        summary: { type: string, description: Short summary of the first request }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_message_preview: { type: string }
+        group_id: { type: string }
+        latest_plan_id: { type: string }
+        plan_status: { $ref: '#/components/schemas/PlanStatus' }
+    SessionList:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SessionSummary' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+    SessionDetail:
+      type: object
+      required: [id, summary, created_at, updated_at, messages, plans]
+      properties:
+        id: { type: string }
+        summary: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        group_id: { type: string }
+        messages:
+          type: array
+          description: Ordered, fully reconstructable timeline.
+          items: { $ref: '#/components/schemas/Message' }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/PlanSummary' }
+
+    # ── Groups ──
+    PreferenceInput:
+      type: object
+      description: Mirrors traveler_preferences.csv; all fields optional/free-text.
+      properties:
+        type: { type: string, description: 'e.g. departure_time, hotel_rating' }
+        value: { type: string }
+        comment: { type: string }
+    MemberInput:
+      type: object
+      required: [full_name]
+      properties:
+        full_name: { type: string }
+        age: { type: integer }
+        citizenship: { type: string }
+        home_airport: { type: string }
+        role_in_group: { type: string, description: 'e.g. parent, child, lead' }
+        loyalty_program: { type: string }
+        notes: { type: string }
+        preferences:
+          type: array
+          items: { $ref: '#/components/schemas/PreferenceInput' }
+    CreateGroupRequest:
+      type: object
+      required: [name, members]
+      properties:
+        name: { type: string }
+        comment: { type: string }
+        budget_rub: { type: integer }
+        origin_city: { type: string }
+        destination: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        members:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/MemberInput' }
+    Preference:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        value: { type: string }
+        comment: { type: string }
+    Member:
+      type: object
+      required: [id, full_name]
+      properties:
+        id: { type: string }
+        full_name: { type: string }
+        age: { type: integer }
+        citizenship: { type: string }
+        home_airport: { type: string }
+        role_in_group: { type: string }
+        loyalty_program: { type: string }
+        notes: { type: string }
+        preferences:
+          type: array
+          items: { $ref: '#/components/schemas/Preference' }
+    Group:
+      type: object
+      required: [id, name, created_at, updated_at, members]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        comment: { type: string }
+        budget_rub: { type: integer }
+        origin_city: { type: string }
+        destination: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/Member' }
+    GroupSummary:
+      type: object
+      required: [id, name, member_count, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        comment: { type: string }
+        budget_rub: { type: integer }
+        destination: { type: string }
+        member_count: { type: integer }
+        created_at: { type: string, format: date-time }
+    GroupList:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/GroupSummary' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+    MemberList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Member' }
+    MemberPreferences:
+      type: object
+      required: [member_id, full_name, preferences]
+      properties:
+        member_id: { type: string }
+        full_name: { type: string }
+        preferences:
+          type: array
+          items: { $ref: '#/components/schemas/Preference' }
+    GroupPreferences:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MemberPreferences' }
+    PlanList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PlanSummary' }
+
+    # ── Plans / Map / Calendar ──
+    PlanStatus:
+      type: string
+      enum: [building, ready, error, accepted, rejected]
+    FlightSel:
+      type: object
+      description: Mirrors flights.csv.
+      required: [flight_id, origin_city, destination, price_rub, baggage_included, stops, departure_time, arrival_time, fare_type]
+      properties:
+        flight_id: { type: string }
+        origin_city: { type: string }
+        destination: { type: string }
+        price_rub: { type: integer }
+        baggage_included: { type: boolean }
+        stops: { type: integer }
+        departure_time: { type: string, description: Local HH:MM time-of-day, example: "10:20" }
+        arrival_time: { type: string, description: Local HH:MM time-of-day, example: "15:40" }
+        fare_type: { type: string, example: standard }
+        notes: { type: string }
+    HotelSel:
+      type: object
+      description: Mirrors hotels.csv; `nights` derived from the plan/recommendation.
+      required: [hotel_id, destination, stars, price_per_night_rub, nights, breakfast_included, free_cancellation, rating]
+      properties:
+        hotel_id: { type: string }
+        destination: { type: string }
+        stars: { type: integer }
+        price_per_night_rub: { type: integer }
+        nights: { type: integer }
+        breakfast_included: { type: boolean }
+        free_cancellation: { type: boolean }
+        rating: { type: number, format: double, example: 8.7 }
+        notes: { type: string }
+    TourSel:
+      type: object
+      description: Mirrors tours.csv.
+      required: [tour_id, destination, total_price_rub, includes_flight, includes_transfer]
+      properties:
+        tour_id: { type: string }
+        destination: { type: string }
+        total_price_rub: { type: integer }
+        includes_flight: { type: boolean }
+        includes_transfer: { type: boolean }
+        hotel_id: { type: string }
+        notes: { type: string }
+    PlanItems:
+      type: object
+      description: The agent's selected components; any subset may be present.
+      properties:
+        flight: { $ref: '#/components/schemas/FlightSel' }
+        hotel: { $ref: '#/components/schemas/HotelSel' }
+        tour: { $ref: '#/components/schemas/TourSel' }
+    Plan:
+      type: object
+      required: [id, session_id, run_id, status, items, map_points, created_at, updated_at]
+      properties:
+        id: { type: string }
+        session_id: { type: string }
+        group_id: { type: string }
+        run_id: { type: string }
+        status: { $ref: '#/components/schemas/PlanStatus' }
+        summary: { type: string }
+        destination: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        decision_rationale:
+          type: string
+          description: Why the agent chose these components (from *_recommendations.csv).
+        estimated_total_rub: { type: integer }
+        items: { $ref: '#/components/schemas/PlanItems' }
+        map_points:
+          type: array
+          items: { $ref: '#/components/schemas/MapPoint' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RejectRequest:
+      type: object
+      properties:
+        reason: { type: string }
+    AddPoint:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [origin, destination, stop] }
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        after_point_id:
+          type: string
+          description: Insert after this existing point (route ordering hint).
+    ModifyRequest:
+      type: object
+      description: Batch route correction. The plan must be `ready`.
+      properties:
+        add:
+          type: array
+          items: { $ref: '#/components/schemas/AddPoint' }
+        remove:
+          type: array
+          description: Ids of map points to remove.
+          items: { type: string }
+        note:
+          type: string
+          description: Free-text wishes for the rebuild.
+    ModifyAccepted:
+      type: object
+      required: [run_id]
+      properties:
+        run_id: { type: string, description: The rebuild run to stream. }
+    MapBounds:
+      type: object
+      required: [north, south, east, west]
+      properties:
+        north: { type: number, format: double }
+        south: { type: number, format: double }
+        east: { type: number, format: double }
+        west: { type: number, format: double }
+    PlanMap:
+      type: object
+      required: [plan_id, status, editable, points]
+      properties:
+        plan_id: { type: string }
+        status: { $ref: '#/components/schemas/PlanStatus' }
+        editable:
+          type: boolean
+          description: True only when status == ready; gates frontend editing.
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/MapPoint' }
+        bounds: { $ref: '#/components/schemas/MapBounds' }
+    CalendarEvent:
+      type: object
+      required: [id, type, title, start]
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [flight, hotel, tour, activity] }
+        title: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        location: { type: string }
+        ref_id:
+          type: string
+          description: Id of the related flight/hotel/tour, when applicable.
+        notes: { type: string }
+    PlanCalendar:
+      type: object
+      required: [plan_id, events]
+      properties:
+        plan_id: { type: string }
+        timezone: { type: string, description: 'IANA tz name, e.g. Europe/Moscow' }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/CalendarEvent' }
