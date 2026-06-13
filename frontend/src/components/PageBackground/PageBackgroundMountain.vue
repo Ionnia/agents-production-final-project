@@ -25,9 +25,9 @@ const { skyLayerStyle, midLayerStyle, foregroundLayerStyle } = useSceneParallax(
       <CutoutLayer
         :src="mountainEagleCutout"
         alt=""
-        :x="70"
-        :y="18"
-        width="9vw"
+        :x="30"
+        :y="22"
+        width="15vw"
       />
     </div>
 
@@ -35,9 +35,9 @@ const { skyLayerStyle, midLayerStyle, foregroundLayerStyle } = useSceneParallax(
       <CutoutLayer
         :src="mountainPineCutout"
         alt=""
-        :x="10"
-        :y="60"
-        width="14vw"
+        :x="88"
+        :y="90"
+        width="36vw"
       />
     </div>
 
@@ -45,23 +45,23 @@ const { skyLayerStyle, midLayerStyle, foregroundLayerStyle } = useSceneParallax(
       <CutoutLayer
         :src="mountainsTentCutout"
         alt=""
-        :x="65"
-        :y="80"
-        width="16vw"
+        :x="68"
+        :y="94"
+        width="20vw"
       />
       <CutoutLayer
         :src="mountainsFireplaceCutout"
         alt=""
-        :x="48"
-        :y="86"
+        :x="58"
+        :y="90"
         width="9vw"
       />
       <CutoutLayer
         :src="mountainHikerCutout"
         alt=""
-        :x="25"
-        :y="82"
-        width="9vw"
+        :x="14"
+        :y="90"
+        width="18vw"
       />
     </div>
   </div>

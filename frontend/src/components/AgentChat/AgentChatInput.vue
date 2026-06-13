@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { useIntervalFn } from "@vueuse/core";
-import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from "vue";
+import { computed, nextTick, onMounted, useTemplateRef, watch } from "vue";
+import { useTextareaCaret } from "./useTextareaCaret";
+import { useTypewriterPlaceholder } from "./useTypewriterPlaceholder";
 
 const MAX_LINES = 5;
 const TEXTAREA_ARIA_LABEL = "Travel question";
@@ -12,26 +13,36 @@ const emit = defineEmits<{
 }>();
 
 const placeholders = [
-  "Where would you like to wander next?",
-  "Ask about hidden gems in Tuscany…",
-  "Plan a desert road trip for me",
-  "Find a cabin under the northern lights",
-  "Suggest an island escape",
+  "Куда бы мне поехать дальше?",
+  "Расскажи про неочевидные места в Тоскане…",
+  "Спланируй мне путешествие по пустыне",
+  "Найди домик под северным сиянием",
+  "Посоветуй, куда сбежать на остров",
 ] as const;
 
-const placeholderIndex = ref(0);
+const hasInput = computed(() => model.value.length > 0);
 
-const currentPlaceholder = computed(
-  () => placeholders[placeholderIndex.value],
-);
-
-const { pause: pausePlaceholderRotation, resume: resumePlaceholderRotation } =
-  useIntervalFn(() => {
-    placeholderIndex.value =
-      (placeholderIndex.value + 1) % placeholders.length;
-  }, 3000);
+const { text: placeholderText } = useTypewriterPlaceholder(placeholders, {
+  paused: hasInput,
+});
 
 const textareaRef = useTemplateRef<HTMLTextAreaElement>("textarea");
+
+const {
+  focused: fieldFocused,
+  x: caretX,
+  y: caretY,
+} = useTextareaCaret(textareaRef);
+
+const caretStyle = computed(() => ({
+  transform: `translate(${caretX.value}px, ${caretY.value}px)`,
+}));
+
+// Recreating the element on each move restarts the blink animation,
+// so the caret stays solid while the user is typing or navigating.
+const caretBlinkKey = computed(
+  () => `${caretX.value}:${caretY.value}:${model.value.length}`,
+);
 
 function syncTextareaHeight() {
   const textarea = textareaRef.value;
@@ -51,13 +62,7 @@ function syncTextareaHeight() {
     textarea.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
-watch(model, async (value) => {
-  if (value) {
-    pausePlaceholderRotation();
-  } else {
-    resumePlaceholderRotation();
-  }
-
+watch(model, async () => {
   await nextTick();
   syncTextareaHeight();
 });
@@ -78,7 +83,7 @@ function onKeydown(event: KeyboardEvent) {
 <template>
   <div class="agent-chat-input">
     <div class="agent-chat-input__stamp">
-      <div class="agent-chat-input__field-wrap">
+      <div class="agent-chat-input__frame">
         <textarea
           ref="textarea"
           v-model="model"
@@ -92,16 +97,30 @@ function onKeydown(event: KeyboardEvent) {
           @keydown="onKeydown"
         />
 
-        <Transition name="agent-chat-input-placeholder" mode="out-in">
+        <span
+          v-if="fieldFocused"
+          :key="caretBlinkKey"
+          class="agent-chat-input__field-caret"
+          :style="caretStyle"
+          aria-hidden="true"
+        />
+
+        <span
+          v-if="!hasInput"
+          class="agent-chat-input__placeholder"
+          aria-hidden="true"
+        >
+          <span class="agent-chat-input__placeholder-text">{{
+            placeholderText
+          }}</span>
+          <!-- Hidden (not removed) on focus: the caret takes part in the
+               row's baseline alignment, so removing it would shift the
+               placeholder text vertically. -->
           <span
-            v-if="!model"
-            :key="placeholderIndex"
-            class="agent-chat-input__placeholder"
-            aria-hidden="true"
-          >
-            {{ currentPlaceholder }}
-          </span>
-        </Transition>
+            class="agent-chat-input__caret"
+            :class="{ 'agent-chat-input__caret--hidden': fieldFocused }"
+          />
+        </span>
       </div>
     </div>
   </div>
@@ -110,154 +129,116 @@ function onKeydown(event: KeyboardEvent) {
 <style scoped>
 .agent-chat-input {
   width: 100%;
-  max-width: 36rem;
+  max-width: 38rem;
+  filter: drop-shadow(0 14px 30px rgba(8, 6, 13, 0.16))
+    drop-shadow(0 3px 8px rgba(8, 6, 13, 0.08));
+  transition: filter 0.3s ease;
+}
+
+.agent-chat-input:focus-within {
+  filter: drop-shadow(0 18px 38px rgba(8, 6, 13, 0.2))
+    drop-shadow(0 0 16px var(--scene-glow, rgba(170, 59, 255, 0.22)));
 }
 
 .agent-chat-input__stamp {
-  --notch-size: 6px;
-  --notch-step: 15px;
-  --stamp-radius: 24px;
-  --stamp-border: #b8b2c2;
-  --stamp-surface: #fff;
-  --placeholder-color: #9ca3af;
+  --stamp-paper: #fff;
+  --placeholder-color: #a39bb0;
 
   position: relative;
-  padding: 3px;
-  border-radius: var(--stamp-radius);
-  filter: drop-shadow(0 10px 28px rgba(8, 6, 13, 0.12))
-    drop-shadow(0 2px 8px rgba(8, 6, 13, 0.06));
+  border-radius: 18px;
+  background: var(--stamp-paper);
+  overflow: hidden;
 }
 
-.agent-chat-input__stamp::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: var(--stamp-radius);
-  background: var(--stamp-border);
-  pointer-events: none;
-  -webkit-mask:
-    radial-gradient(
-        circle at 50% calc(100% + var(--notch-size)),
-        transparent calc(var(--notch-size) - 0.5px),
-        #000 var(--notch-size)
-      )
-      50% 100% / var(--notch-step) calc(var(--notch-size) * 2.5) repeat-x,
-    radial-gradient(
-        circle at 50% calc(var(--notch-size) * -1),
-        transparent calc(var(--notch-size) - 0.5px),
-        #000 var(--notch-size)
-      )
-      50% 0 / var(--notch-step) calc(var(--notch-size) * 2.5) repeat-x,
-    radial-gradient(
-        circle at calc(100% + var(--notch-size)) 50%,
-        transparent calc(var(--notch-size) - 0.5px),
-        #000 var(--notch-size)
-      )
-      100% 50% / calc(var(--notch-size) * 2.5) var(--notch-step) repeat-y,
-    radial-gradient(
-        circle at calc(var(--notch-size) * -1) 50%,
-        transparent calc(var(--notch-size) - 0.5px),
-        #000 var(--notch-size)
-      )
-      0 50% / calc(var(--notch-size) * 2.5) var(--notch-step) repeat-y,
-    linear-gradient(#000 0 0) center / 100% 100% no-repeat;
-  mask:
-    radial-gradient(
-        circle at 50% calc(100% + var(--notch-size)),
-        transparent calc(var(--notch-size) - 0.5px),
-        #000 var(--notch-size)
-      )
-      50% 100% / var(--notch-step) calc(var(--notch-size) * 2.5) repeat-x,
-    radial-gradient(
-        circle at 50% calc(var(--notch-size) * -1),
-        transparent calc(var(--notch-size) - 0.5px),
-        #000 var(--notch-size)
-      )
-      50% 0 / var(--notch-step) calc(var(--notch-size) * 2.5) repeat-x,
-    radial-gradient(
-        circle at calc(100% + var(--notch-size)) 50%,
-        transparent calc(var(--notch-size) - 0.5px),
-        #000 var(--notch-size)
-      )
-      100% 50% / calc(var(--notch-size) * 2.5) var(--notch-step) repeat-y,
-    radial-gradient(
-        circle at calc(var(--notch-size) * -1) 50%,
-        transparent calc(var(--notch-size) - 0.5px),
-        #000 var(--notch-size)
-      )
-      0 50% / calc(var(--notch-size) * 2.5) var(--notch-step) repeat-y,
-    linear-gradient(#000 0 0) center / 100% 100% no-repeat;
-  -webkit-mask-composite: source-in;
-  mask-composite: intersect;
-}
-
-.agent-chat-input__field-wrap {
+.agent-chat-input__frame {
   position: relative;
-  z-index: 1;
-  border-radius: calc(var(--stamp-radius) - 3px);
-  background: var(--stamp-surface);
 }
 
 .agent-chat-input__field {
   display: block;
   width: 100%;
-  padding: 1rem 1.25rem;
+  padding: 1.15rem 1.4rem;
   border: none;
-  border-radius: calc(var(--stamp-radius) - 3px);
-  background: #fff;
+  background: transparent;
   color: #000;
   font: inherit;
-  line-height: 1.45;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  letter-spacing: 0.1px;
+  /* The native caret can't be sized, so it's hidden and replaced by
+     .agent-chat-input__field-caret, drawn at the measured position. */
+  caret-color: transparent;
   resize: none;
   overflow-y: hidden;
   outline: none;
   box-sizing: border-box;
 }
 
-.agent-chat-input__field:focus-visible {
-  outline: 2px solid var(--accent-border);
-  outline-offset: -2px;
-}
-
 .agent-chat-input__placeholder {
   position: absolute;
-  inset: 1rem 1.25rem;
+  inset: 1.15rem 1.4rem;
+  display: flex;
+  align-items: baseline;
+  font-size: 1.05rem;
+  line-height: 1.5;
   color: var(--placeholder-color);
   pointer-events: none;
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.agent-chat-input-placeholder-enter-active,
-.agent-chat-input-placeholder-leave-active {
-  transition:
-    opacity 0.35s ease,
-    transform 0.35s ease;
+.agent-chat-input__placeholder-text {
+  overflow: hidden;
+  text-overflow: clip;
 }
 
-.agent-chat-input-placeholder-enter-from,
-.agent-chat-input-placeholder-leave-to {
-  opacity: 0;
-  transform: translateY(4px);
+.agent-chat-input__caret,
+.agent-chat-input__field-caret {
+  width: 2px;
+  height: 1.2em;
+  font-size: 1.05rem;
+  border-radius: 1px;
+  background: var(--scene-accent, var(--accent, #aa3bff));
+  animation: agent-chat-input-caret-blink 1.1s steps(2, jump-none) infinite;
+}
+
+.agent-chat-input__caret {
+  flex: none;
+  margin-left: 2px;
+  transform: translateY(0.2em);
+}
+
+.agent-chat-input__caret--hidden {
+  visibility: hidden;
+  animation: none;
+}
+
+.agent-chat-input__field-caret {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+@keyframes agent-chat-input-caret-blink {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-chat-input-placeholder-enter-active,
-  .agent-chat-input-placeholder-leave-active {
+  .agent-chat-input {
     transition: none;
   }
 
-  .agent-chat-input-placeholder-enter-from,
-  .agent-chat-input-placeholder-leave-to {
-    transform: none;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  .agent-chat-input__stamp {
-    --stamp-border: #4a4658;
+  .agent-chat-input__caret,
+  .agent-chat-input__field-caret {
+    animation: none;
   }
 }
 </style>

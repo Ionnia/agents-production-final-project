@@ -2,7 +2,7 @@
 
 @layer components {
   .page-background {
-    @apply fixed inset-0 -z-10 overflow-hidden pointer-events-none;
+    @apply fixed inset-0 -z-10 overflow-hidden pointer-events-none select-none;
   }
 
   .page-background__scene {

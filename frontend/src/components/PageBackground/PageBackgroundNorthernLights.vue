@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import backgroundImg from '../../assets/images/northern_lights_background.webp'
-import hutImg from '../../assets/images/northern_lights_hut_cutout.webp'
-import pineImg from '../../assets/images/northern_lights_pine_cutout.webp'
-import manImg from '../../assets/images/northern_lights_man_cutout.webp'
-import huskyImg from '../../assets/images/northern_lights_husky_cutout.webp'
-import CutoutLayer from './CutoutLayer.vue'
-import { useSceneParallax } from './useSceneParallax'
+import backgroundImg from "../../assets/images/northern_lights_background.webp";
+import hutImg from "../../assets/images/northern_lights_hut_cutout.webp";
+import pineImg from "../../assets/images/northern_lights_pine_cutout.webp";
+import manImg from "../../assets/images/northern_lights_man_cutout.webp";
+import huskyImg from "../../assets/images/northern_lights_husky_cutout.webp";
+import CutoutLayer from "./CutoutLayer.vue";
+import { useSceneParallax } from "./useSceneParallax";
 
-const { midLayerStyle, foregroundLayerStyle } = useSceneParallax()
+const { midLayerStyle, foregroundLayerStyle } = useSceneParallax();
 </script>
 
 <template>
@@ -24,17 +24,17 @@ const { midLayerStyle, foregroundLayerStyle } = useSceneParallax()
       <CutoutLayer
         :src="hutImg"
         alt=""
-        :x="72"
-        :y="62"
-        width="16vw"
+        :x="88"
+        :y="83"
+        width="30vw"
         wiggle-origin="14% 9%"
       />
       <CutoutLayer
         :src="pineImg"
         alt=""
-        :x="12"
-        :y="58"
-        width="14vw"
+        :x="10"
+        :y="78"
+        width="24vw"
         wiggle-origin="82% 11%"
       />
     </div>
@@ -44,15 +44,15 @@ const { midLayerStyle, foregroundLayerStyle } = useSceneParallax()
         :src="manImg"
         alt=""
         :x="40"
-        :y="80"
-        width="9vw"
+        :y="85"
+        width="12vw"
         wiggle-origin="18% 8%"
       />
       <CutoutLayer
         :src="huskyImg"
         alt=""
-        :x="52"
-        :y="84"
+        :x="88"
+        :y="82"
         width="8vw"
         wiggle-origin="78% 12%"
       />
