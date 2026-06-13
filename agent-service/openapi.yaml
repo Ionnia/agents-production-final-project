@@ -1,0 +1,613 @@
+openapi: 3.1.0
+
+info:
+  title: Agent Service API (Contract A — Backend → Agent)
+  version: 1.0.0
+  license:
+    name: UNLICENSED
+  description: |
+    Internal contract by which the **backend (BFF)** drives the **agent microservice**. The frontend
+    never calls this API. The agent is a stateful LangGraph runtime; the backend sends only the *new
+    turn* plus a `thread_id` each run, opens an SSE stream, and forwards normalized events to the
+    frontend. The agent **proposes** a draft plan over the stream — the backend validates and persists.
+
+    Paired contract: **Contract B** (`internal-tools-openapi.yaml`) — the Backend Internal Tool API
+    the agent calls for business data. Design: `docs/superpowers/specs/2026-06-14-backend-agent-api-design.md`.
+
+    ## Conventions
+    - **Auth:** `Authorization: Bearer <AGENT_SERVICE_TOKEN>` (service token, private network) on
+      every endpoint except `GET /v1/health`. Optional scopes: `run:create`, `run:read`, `run:cancel`.
+      The agent trusts the backend's identity, never a raw `user_id`.
+    - **Correlation:** `X-Correlation-ID` is required on every call and threaded to tracing.
+    - **Run model:** two calls — `POST /v1/runs` returns a `stream_url`, then `GET /v1/runs/{id}/stream`
+      delivers SSE. Reconnect with `Last-Event-ID`.
+    - **Money:** integer `*_rub` (whole rubles). **IDs:** opaque strings. **Timestamps:** RFC 3339 UTC,
+      except flight `departure_time`/`arrival_time` which are local `HH:MM` strings.
+    - **Errors:** the `Error` envelope on every non-2xx; mid-stream failures use the SSE `error` event.
+
+servers:
+  - url: /v1
+    description: Agent Service (internal), e.g. http://agent-service:8001/v1
+
+tags:
+  - name: Runs
+    description: Create, stream, inspect, and cancel agent runs
+  - name: Threads
+    description: Conversation thread state (debug/demo)
+  - name: Service
+    description: Health and service metadata
+
+security:
+  - bearerAuth: []
+
+paths:
+  /runs:
+    post:
+      tags: [Runs]
+      summary: Create an agent run on a thread
+      operationId: createRun
+      description: |
+        Starts a run. Because the agent is stateful, send only the new turn plus `thread_id`; omit
+        `thread_id` to start a new conversation (the agent mints and returns one). Provide the field
+        matching `mode`: `message` (new_trip / qa), `answer` (answer), or `route_edits` (modify).
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateRunRequest' }
+      responses:
+        '202':
+          description: Run accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunCreated' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '502': { $ref: '#/components/responses/AgentUnavailable' }
+
+  /runs/{agent_run_id}/stream:
+    get:
+      tags: [Runs]
+      summary: Stream run events (Server-Sent Events)
+      operationId: streamRun
+      description: |
+        Opens a `text/event-stream`. Each SSE frame has an `event:` name and a JSON `data:` payload,
+        and carries an `id:` so a dropped connection can resume via the `Last-Event-ID` request header.
+        The stream closes on a terminal `run_status` (`completed` / `cancelled` / `error`).
+
+        **Event names → data schema:**
+        | `event:` | `data:` schema |
+        |---|---|
+        | `run_status` | `RunStatusEvent` |
+        | `message_delta` | `MessageDeltaEvent` |
+        | `message` | `MessageEvent` |
+        | `clarifying_question` | `ClarifyingQuestionEvent` |
+        | `plan_status` | `PlanStatusEvent` |
+        | `plan` | `PlanEvent` |
+        | `constraints_conflict` | `ConstraintsConflictEvent` |
+        | `escalation` | `EscalationEvent` |
+        | `observability` | `ObservabilityEvent` (optional — backend may log, need not forward) |
+        | `error` | `ErrorEvent` |
+      parameters:
+        - $ref: '#/components/parameters/AgentRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Resume the stream after this event id.
+          schema: { type: string }
+      responses:
+        '200':
+          description: |
+            An event stream. The schema documents the union of possible `data:` payloads; discriminate
+            on the `event:` name (see the table above).
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/SseEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /runs/{agent_run_id}:
+    get:
+      tags: [Runs]
+      summary: Get run status
+      operationId: getRun
+      parameters:
+        - $ref: '#/components/parameters/AgentRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Run status snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /runs/{agent_run_id}/cancel:
+    post:
+      tags: [Runs]
+      summary: Cancel an in-flight run
+      operationId: cancelRun
+      parameters:
+        - $ref: '#/components/parameters/AgentRunId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '202':
+          description: Cancellation requested
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CancelResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Run already finished
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /threads/{thread_id}/state:
+    get:
+      tags: [Threads]
+      summary: Inspect thread state (debug/demo)
+      operationId: getThreadState
+      description: |
+        Returns a snapshot of the agent's current `AgentState` for the thread. Intended for debugging
+        and demos; not part of the normal run flow.
+      parameters:
+        - $ref: '#/components/parameters/ThreadId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Thread state snapshot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ThreadState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /health:
+    get:
+      tags: [Service]
+      summary: Liveness / readiness
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /info:
+    get:
+      tags: [Service]
+      summary: Service metadata (version, model, capabilities)
+      operationId: getInfo
+      responses:
+        '200':
+          description: Service info
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Static internal service token (`AGENT_SERVICE_TOKEN`).
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: true
+      description: Correlation id threaded through frontend → backend → agent → tracing.
+      schema: { type: string }
+    AgentRunId:
+      name: agent_run_id
+      in: path
+      required: true
+      schema: { type: string }
+    ThreadId:
+      name: thread_id
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid service token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Token lacks the required scope
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Unknown run/thread
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Malformed or invalid body/params
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    AgentUnavailable:
+      description: Agent/LLM upstream failure
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    # ── Error ──
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [validation_error, unauthorized, forbidden, not_found, conflict,
+                     rate_limited, agent_unavailable, timeout, internal]
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+            recoverable:
+              type: boolean
+              description: Whether the caller may retry.
+
+    # ── Enums shared across request & events ──
+    RunMode:
+      type: string
+      enum: [new_trip, modify, answer, qa]
+    RunOutcome:
+      type: string
+      enum: [recommendation, clarification, constraints_conflict, escalation]
+    PlanBuildStatus:
+      type: string
+      enum: [building, ready, error]
+    PointKind:
+      type: string
+      enum: [origin, destination, stop]
+
+    # ── Create run ──
+    Answer:
+      type: object
+      required: [in_reply_to_question_id]
+      properties:
+        in_reply_to_question_id: { type: string }
+        selected_option_ids:
+          type: array
+          items: { type: string }
+        freeform: { type: string }
+    AddPoint:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        kind: { $ref: '#/components/schemas/PointKind' }
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        after_point_id:
+          type: string
+          description: Insert after this existing point (route ordering hint).
+    RouteEdits:
+      type: object
+      description: Batch route correction for mode=modify.
+      properties:
+        add:
+          type: array
+          items: { $ref: '#/components/schemas/AddPoint' }
+        remove:
+          type: array
+          description: Ids of map points to remove.
+          items: { type: string }
+        note: { type: string }
+    CreateRunRequest:
+      type: object
+      required: [external_run_id, correlation_id, session_id, user_id, mode]
+      description: |
+        Provide the field matching `mode`: `message` (new_trip / qa), `answer` (answer), or
+        `route_edits` (modify).
+      properties:
+        external_run_id:
+          type: string
+          description: Backend's run id — idempotency + correlation key.
+        correlation_id: { type: string }
+        session_id: { type: string }
+        user_id:
+          type: string
+          description: Informational; the agent authorizes on the backend's identity, not this value.
+        thread_id:
+          type: string
+          description: Omit to start a new conversation (agent mints one).
+        group_id: { type: string }
+        active_plan_id:
+          type: string
+          description: Present when modifying an existing plan.
+        mode: { $ref: '#/components/schemas/RunMode' }
+        message:
+          type: string
+          description: The new user turn (new_trip / qa). The thread holds prior history.
+        answer: { $ref: '#/components/schemas/Answer' }
+        route_edits: { $ref: '#/components/schemas/RouteEdits' }
+        locale: { type: string, description: 'e.g. ru' }
+        metadata:
+          type: object
+          additionalProperties: true
+    RunCreated:
+      type: object
+      required: [agent_run_id, thread_id, status, stream_url]
+      properties:
+        agent_run_id: { type: string }
+        thread_id: { type: string }
+        status: { type: string, const: started }
+        stream_url:
+          type: string
+          description: Relative URL of the SSE stream for this run.
+
+    # ── Run status / cancel ──
+    RunStatus:
+      type: object
+      required: [agent_run_id, thread_id, status, started_at]
+      properties:
+        agent_run_id: { type: string }
+        thread_id: { type: string }
+        status:
+          type: string
+          enum: [queued, running, completed, cancelled, error]
+        current_node:
+          type: string
+          description: LangGraph node currently executing (observability).
+        outcome: { $ref: '#/components/schemas/RunOutcome' }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+    CancelResponse:
+      type: object
+      required: [agent_run_id, status]
+      properties:
+        agent_run_id: { type: string }
+        status: { type: string, const: cancelling }
+
+    # ── Thread state (debug) ──
+    ThreadMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [user, assistant, system, tool] }
+        content: { type: string }
+        created_at: { type: string, format: date-time }
+    ThreadState:
+      type: object
+      required: [thread_id]
+      properties:
+        thread_id: { type: string }
+        session_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        messages:
+          type: array
+          items: { $ref: '#/components/schemas/ThreadMessage' }
+        state:
+          type: object
+          description: Free-form AgentState snapshot (impl-defined).
+          additionalProperties: true
+
+    # ── Service ──
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        detail: { type: string }
+    ServiceInfo:
+      type: object
+      required: [service, version]
+      properties:
+        service: { type: string }
+        version: { type: string }
+        model: { type: string, description: Default LLM model id }
+        graph_version: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+
+    # ── Shared content objects ──
+    AssistantMessage:
+      type: object
+      required: [id, role, content]
+      properties:
+        id: { type: string }
+        role: { type: string, const: assistant }
+        content: { type: string }
+    QuestionOption:
+      type: object
+      required: [id, label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+    ClarifyingQuestion:
+      type: object
+      required: [id, text, options, allow_freeform]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        options:
+          type: array
+          description: Mutually exclusive closed-answer options.
+          items: { $ref: '#/components/schemas/QuestionOption' }
+        allow_freeform: { type: boolean }
+    MapPoint:
+      type: object
+      required: [name, kind, lat, lng, order]
+      properties:
+        name: { type: string }
+        kind: { $ref: '#/components/schemas/PointKind' }
+        lat: { type: number, format: double }
+        lng: { type: number, format: double }
+        order: { type: integer }
+        note: { type: string }
+    CalendarEvent:
+      type: object
+      required: [type, title, start]
+      properties:
+        type: { type: string, enum: [flight, hotel, tour, activity] }
+        title: { type: string }
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+        location: { type: string }
+        ref_id:
+          type: string
+          description: Id of the related flight/hotel/tour, when applicable.
+        notes: { type: string }
+    PlanSelections:
+      type: object
+      description: Offer ids the agent selected; the backend hydrates full details from its DB.
+      properties:
+        flight_id: { type: string }
+        hotel_id: { type: string }
+        tour_id: { type: string }
+    DraftPlan:
+      type: object
+      required: [selections, map_points]
+      properties:
+        destination: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        selections: { $ref: '#/components/schemas/PlanSelections' }
+        estimated_total_rub: { type: integer }
+        decision_rationale: { type: string }
+        map_points:
+          type: array
+          items: { $ref: '#/components/schemas/MapPoint' }
+        calendar_events:
+          type: array
+          items: { $ref: '#/components/schemas/CalendarEvent' }
+        warnings:
+          type: array
+          items: { type: string }
+
+    # ── SSE events ──
+    RunStatusEvent:
+      type: object
+      required: [agent_run_id, status]
+      properties:
+        agent_run_id: { type: string }
+        status:
+          type: string
+          enum: [started, running, completed, cancelled, error]
+        outcome: { $ref: '#/components/schemas/RunOutcome' }
+    MessageDeltaEvent:
+      type: object
+      required: [agent_run_id, message_id, delta]
+      properties:
+        agent_run_id: { type: string }
+        message_id: { type: string }
+        delta: { type: string }
+    MessageEvent:
+      type: object
+      required: [agent_run_id, message]
+      properties:
+        agent_run_id: { type: string }
+        message: { $ref: '#/components/schemas/AssistantMessage' }
+    ClarifyingQuestionEvent:
+      type: object
+      required: [agent_run_id, question]
+      properties:
+        agent_run_id: { type: string }
+        question: { $ref: '#/components/schemas/ClarifyingQuestion' }
+    PlanStatusEvent:
+      type: object
+      required: [agent_run_id, status]
+      properties:
+        agent_run_id: { type: string }
+        status: { $ref: '#/components/schemas/PlanBuildStatus' }
+        error: { type: string }
+    PlanEvent:
+      type: object
+      required: [agent_run_id, plan]
+      properties:
+        agent_run_id: { type: string }
+        plan: { $ref: '#/components/schemas/DraftPlan' }
+    ConstraintsConflictEvent:
+      type: object
+      required: [agent_run_id, message, suggested_relaxations]
+      properties:
+        agent_run_id: { type: string }
+        message: { type: string }
+        suggested_relaxations:
+          type: array
+          items: { type: string }
+    EscalationEvent:
+      type: object
+      required: [agent_run_id, reason, message]
+      properties:
+        agent_run_id: { type: string }
+        reason: { type: string }
+        message: { type: string }
+    ObservabilityEvent:
+      type: object
+      required: [agent_run_id, kind]
+      description: Optional internal step events; the backend may log them and need not forward them.
+      properties:
+        agent_run_id: { type: string }
+        kind:
+          type: string
+          enum: [node_started, node_finished, tool_call, tool_result, tool_error]
+        node: { type: string }
+        tool: { type: string }
+        recoverable: { type: boolean }
+        summary: { type: string }
+        ms: { type: integer, description: Step duration in milliseconds }
+    ErrorEvent:
+      type: object
+      required: [agent_run_id, error]
+      properties:
+        agent_run_id: { type: string }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            recoverable: { type: boolean }
+    SseEvent:
+      description: |
+        Union of possible SSE `data:` payloads. Discriminate on the SSE `event:` name (see the stream
+        operation's description), not on a body field.
+      oneOf:
+        - $ref: '#/components/schemas/RunStatusEvent'
+        - $ref: '#/components/schemas/MessageDeltaEvent'
+        - $ref: '#/components/schemas/MessageEvent'
+        - $ref: '#/components/schemas/ClarifyingQuestionEvent'
+        - $ref: '#/components/schemas/PlanStatusEvent'
+        - $ref: '#/components/schemas/PlanEvent'
+        - $ref: '#/components/schemas/ConstraintsConflictEvent'
+        - $ref: '#/components/schemas/EscalationEvent'
+        - $ref: '#/components/schemas/ObservabilityEvent'
+        - $ref: '#/components/schemas/ErrorEvent'

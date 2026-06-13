@@ -1,0 +1,386 @@
+openapi: 3.1.0
+
+info:
+  title: Backend Internal Tool API (Contract B — Agent → Backend)
+  version: 1.0.0
+  license:
+    name: UNLICENSED
+  description: |
+    Internal API the **backend (BFF)** exposes to the **agent microservice** so the agent can read
+    business data (group context, flight/hotel/tour offers) and validate a candidate plan without
+    touching the business DB directly. This keeps the backend the single owner of business data and
+    access control (Variant B).
+
+    **Read-only by design:** the agent never writes business data here. It proposes a draft plan over
+    the Contract A SSE stream (`agent-service/openapi.yaml`); the backend validates and persists.
+    Design: `docs/superpowers/specs/2026-06-14-backend-agent-api-design.md`.
+
+    ## Conventions
+    - **Auth:** `Authorization: Bearer <BACKEND_TOOL_TOKEN>` (service token, private network) on every
+      endpoint.
+    - **Correlation:** `X-Correlation-ID` required on every call (same id as the originating run).
+    - **Money:** integer `*_rub` (whole rubles). **IDs:** opaque strings. **Booleans:** the CSV
+      `*_included` / `free_cancellation` 0/1 columns are exposed as JSON booleans. Flight times are
+      local `HH:MM` strings.
+    - **Errors:** the `Error` envelope on every non-2xx.
+
+servers:
+  - url: /internal
+    description: Backend Internal Tool API (private), e.g. http://backend:8000/internal
+
+tags:
+  - name: Groups
+    description: Group / traveler context for a run
+  - name: Offers
+    description: Search flights, hotels, and tours
+  - name: Plans
+    description: Validate a candidate plan against the group's budget and constraints
+
+security:
+  - bearerAuth: []
+
+paths:
+  /groups/{group_id}/context:
+    get:
+      tags: [Groups]
+      summary: Get the full context of a travel group
+      operationId: getGroupContext
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Group context (members + preferences + trip fields)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupContext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /flights/search:
+    post:
+      tags: [Offers]
+      summary: Search flight offers
+      operationId: searchFlights
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlightSearchRequest' }
+      responses:
+        '200':
+          description: Matching flight offers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlightSearchResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /hotels/search:
+    post:
+      tags: [Offers]
+      summary: Search hotel offers
+      operationId: searchHotels
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HotelSearchRequest' }
+      responses:
+        '200':
+          description: Matching hotel offers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HotelSearchResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /tours/search:
+    post:
+      tags: [Offers]
+      summary: Search package-tour offers
+      operationId: searchTours
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TourSearchRequest' }
+      responses:
+        '200':
+          description: Matching tour offers
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TourSearchResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /plans/validate:
+    post:
+      tags: [Plans]
+      summary: Validate a candidate plan against budget and constraints
+      operationId: validatePlan
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ValidatePlanRequest' }
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValidationResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Static internal service token (`BACKEND_TOOL_TOKEN`).
+
+  parameters:
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: true
+      description: Same correlation id as the originating run.
+      schema: { type: string }
+    GroupId:
+      name: group_id
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Unauthorized:
+      description: Missing/invalid service token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Unknown group/resource
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: Malformed or invalid body/params
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [validation_error, unauthorized, forbidden, not_found, conflict,
+                     rate_limited, internal]
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+
+    # ── Group context ──
+    Preference:
+      type: object
+      description: Mirrors traveler_preferences.csv.
+      properties:
+        type: { type: string, description: 'e.g. departure_time, hotel_rating' }
+        value: { type: string }
+        comment: { type: string }
+    GroupMember:
+      type: object
+      required: [traveler_id]
+      properties:
+        traveler_id: { type: string }
+        full_name: { type: string }
+        age: { type: integer }
+        citizenship: { type: string }
+        home_airport: { type: string }
+        role_in_group: { type: string, description: 'e.g. parent, child, lead' }
+        loyalty_program: { type: string }
+        preferences:
+          type: array
+          items: { $ref: '#/components/schemas/Preference' }
+        notes: { type: string }
+    GroupContext:
+      type: object
+      required: [group_id, members]
+      properties:
+        group_id: { type: string }
+        origin_city: { type: string }
+        destination: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        budget_rub: { type: integer }
+        members:
+          type: array
+          items: { $ref: '#/components/schemas/GroupMember' }
+        history_summary:
+          type: string
+          description: Short natural-language summary of the group's past choices.
+
+    # ── Flights ──
+    FlightSearchRequest:
+      type: object
+      required: [origin, destination]
+      properties:
+        origin: { type: string }
+        destination: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        passengers_count: { type: integer }
+        required_baggage: { type: boolean }
+        max_stops: { type: integer }
+        avoid_night_arrival: { type: boolean }
+        budget_rub: { type: integer }
+    FlightOffer:
+      type: object
+      description: Mirrors flights.csv.
+      required: [flight_id, origin_city, destination, price_rub, baggage_included, stops, departure_time, arrival_time, fare_type]
+      properties:
+        flight_id: { type: string }
+        origin_city: { type: string }
+        destination: { type: string }
+        price_rub: { type: integer }
+        baggage_included: { type: boolean }
+        stops: { type: integer }
+        departure_time: { type: string, description: Local HH:MM time-of-day, example: "10:20" }
+        arrival_time: { type: string, description: Local HH:MM time-of-day, example: "15:40" }
+        fare_type: { type: string, example: standard }
+        notes: { type: string }
+    FlightSearchResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/FlightOffer' }
+
+    # ── Hotels ──
+    HotelSearchRequest:
+      type: object
+      required: [destination]
+      properties:
+        destination: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        nights: { type: integer }
+        guests_count: { type: integer }
+        breakfast_required: { type: boolean }
+        free_cancellation_preferred: { type: boolean }
+        min_stars: { type: integer }
+        budget_per_night_rub: { type: integer }
+    HotelOffer:
+      type: object
+      description: Mirrors hotels.csv.
+      required: [hotel_id, destination, stars, price_per_night_rub, breakfast_included, free_cancellation, rating]
+      properties:
+        hotel_id: { type: string }
+        destination: { type: string }
+        stars: { type: integer }
+        price_per_night_rub: { type: integer }
+        breakfast_included: { type: boolean }
+        free_cancellation: { type: boolean }
+        rating: { type: number, format: double, example: 8.7 }
+        notes: { type: string }
+    HotelSearchResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/HotelOffer' }
+
+    # ── Tours ──
+    TourSearchRequest:
+      type: object
+      required: [destination]
+      properties:
+        destination: { type: string }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        pax: { type: integer }
+        budget_rub: { type: integer }
+        includes_flight: { type: boolean }
+        includes_transfer: { type: boolean }
+    TourOffer:
+      type: object
+      description: Mirrors tours.csv.
+      required: [tour_id, destination, total_price_rub, includes_flight, includes_transfer]
+      properties:
+        tour_id: { type: string }
+        destination: { type: string }
+        total_price_rub: { type: integer }
+        includes_flight: { type: boolean }
+        includes_transfer: { type: boolean }
+        hotel_id: { type: string }
+        notes: { type: string }
+    TourSearchResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/TourOffer' }
+
+    # ── Plan validation ──
+    PlanSelectionForValidation:
+      type: object
+      properties:
+        flight_id: { type: string }
+        hotel_id: { type: string }
+        tour_id: { type: string }
+        total_cost_rub: { type: integer }
+    PlanConstraints:
+      type: object
+      description: Hard/soft constraints to check; open-ended for additional keys.
+      additionalProperties: true
+      properties:
+        budget_rub: { type: integer }
+        avoid_night_flights: { type: boolean }
+        required_baggage: { type: boolean }
+        max_stops: { type: integer }
+        min_stars: { type: integer }
+    ValidatePlanRequest:
+      type: object
+      required: [group_id, plan]
+      properties:
+        group_id: { type: string }
+        plan: { $ref: '#/components/schemas/PlanSelectionForValidation' }
+        constraints: { $ref: '#/components/schemas/PlanConstraints' }
+    Violation:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    ValidationResult:
+      type: object
+      required: [valid, hard_violations, soft_warnings]
+      properties:
+        valid: { type: boolean }
+        hard_violations:
+          type: array
+          items: { $ref: '#/components/schemas/Violation' }
+        soft_warnings:
+          type: array
+          items: { type: string }
+        budget_left_rub: { type: integer }

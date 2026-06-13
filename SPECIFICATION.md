@@ -12,47 +12,58 @@ module spec in sync with the code.
 ## 1. System overview
 
 ```
-┌────────────────┐    HTTP + SSE (/api/v1)    ┌────────────────────┐
-│  Frontend      │ ─────────────────────────▶ │  Agent backend     │
-│  (Vue 3 + TS)  │ ◀───────────────────────── │  (LLM + tools)     │
-│  chat + map +  │      runs / plans / map     │                    │
-│  calendar UI   │                             └─────────┬──────────┘
-└────────────────┘                                       │ tools (DB / RAG)
-                                                          ▼
-                                              ┌────────────────────────┐
-                                              │  Domain data (data/)    │
-                                              │  travelers · flights ·  │
-                                              │  hotels · tours ·       │
-                                              │  documents · reference  │
-                                              └────────────────────────┘
+┌──────────────┐  HTTP+SSE (/api/v1)  ┌──────────────────────┐
+│  Frontend    │ ───────────────────▶ │  Backend API (BFF)   │ owns: users, sessions, plans,
+│  (Vue 3+TS)  │ ◀─────────────────── │                      │ groups, business DB, access ctrl
+└──────────────┘   plans·map·calendar └───┬──────────▲───────┘
+                                          │          │
+                       Contract A: /v1 runs+SSE   Contract B: /internal/*
+                                          ▼          │ (business data + validate)
+                                      ┌──────────────────────┐
+                                      │  Agent Service        │ owns: LangGraph graph, threads,
+                                      │  (LangGraph runtime)  │ prompts, LLM, RAG/Chroma
+                                      └──────────────────────┘
+
+Domain data (data/):  travelers·flights·hotels·tours → backend business DB;
+                      documents → agent RAG;  reference·qa → eval.
 ```
 
-- The **frontend** is a chat UI. The user converses with the agent, answers closed clarifying
-  questions, watches the route render on a map, and edits it once it is ready.
-- The **backend** runs the agent: it interprets the request, queries the domain data through tools,
-  answers from policy documents (RAG), and produces a **plan** (selected flight/hotel/tour + route +
-  calendar). It streams progress back over SSE.
-- The **contract** between them — the only integration surface the frontend depends on — is the
-  `api/` module's OpenAPI document.
-- The **domain data** (`data/`) is the synthetic dataset the agent reasons over.
+- The **frontend** is a chat UI and talks only to the backend. The user converses with the agent,
+  answers closed clarifying questions, watches the route render on a map, and edits it once ready.
+- The **backend (BFF)** owns all business data and access control (users, sessions, plans, groups,
+  the business DB). It authorizes the user, drives the agent, and proxies the agent's events to the
+  frontend; it persists the plan the agent proposes.
+- The **agent service** is a separate microservice (LangGraph runtime). It reasons, retrieves from
+  policy documents (RAG), calls the LLM, and **pulls business data from the backend's internal API**
+  (Variant B). It never talks to the frontend and never writes business data — it *proposes* a draft
+  plan that the backend persists.
+- **Contracts:** the only frontend↔backend surface is the `api/` module's OpenAPI document; the
+  backend↔agent surface is the `agent-service/` module's two OpenAPI documents.
+- The **domain data** (`data/`) is the synthetic dataset: offers/travelers back the business DB,
+  policy documents back the agent's RAG, and reference/QA drive evaluation.
 
 ### Core interaction (async run model)
 
-A chat message creates a **run** (one agent turn); the run streams typed events (assistant text,
-clarifying questions, map snapshots, and a `plan_status` of `building → ready | error`). While a plan
+A chat message creates a **run** (one agent turn). The backend opens a run on the agent service
+(`POST /v1/runs`) and forwards the agent's streamed events to the frontend's SSE: assistant text,
+clarifying questions, map snapshots, and a `plan_status` of `building → ready | error`. While a plan
 is not `ready` the map is read-only. The user corrects the route by submitting a batch of
-added/removed points, which starts a new rebuild run. Full lifecycle: [`api/SPECIFICATION.md`](./api/SPECIFICATION.md).
+added/removed points, which starts a new rebuild run. Lifecycles:
+[`api/SPECIFICATION.md`](./api/SPECIFICATION.md) (frontend↔backend) and
+[`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) (backend↔agent).
 
 ## 2. Modules
 
 | Module | Path | Spec | Status |
 |---|---|---|---|
-| **API contract** | [`api/`](./api/) | [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) → [`api/openapi.yaml`](./api/openapi.yaml) | Defined; not implemented |
+| **Frontend↔Backend contract** | [`api/`](./api/) | [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) → [`api/openapi.yaml`](./api/openapi.yaml) | Defined; not implemented |
+| **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Defined; not implemented |
 | **Frontend** | [`frontend/`](./frontend/) | [`frontend/src/SPEC.md`](./frontend/src/SPEC.md) (UI/visual scenes) | UI shell + animated backgrounds; API client not built |
 | **Domain data** | [`data/`](./data/) | [`README.md`](./README.md) (dataset description) | Present (synthetic seed data) |
-| **Agent backend** | _not in repo yet_ | — | Planned; owns the agent, tools, and SQLite schema |
+| **Backend service (BFF)** | _not in repo yet_ | — | Planned; implements the `api/` + `/internal` contracts, owns the business DB |
+| **Agent Service** | _not in repo yet_ | — | Planned; implements Contract A; LangGraph + RAG/LLM |
 
-### 2.1 API contract (`api/`)
+### 2.1 Frontend↔Backend contract (`api/`)
 
 The frontend-facing HTTP + SSE contract: auth (JWT), chat/run with SSE streaming, sessions (chat
 history), groups (reusable travel-party context), and plans (route) with map and calendar. Money is
@@ -60,7 +71,16 @@ integer rubles; schemas mirror the `data/` columns so the backend maps straight 
 Deferred to later specs: `eval/*` and `debug/*` ops endpoints, plan versioning. See
 [`api/SPECIFICATION.md`](./api/SPECIFICATION.md).
 
-### 2.2 Frontend (`frontend/`)
+### 2.2 Backend↔Agent contracts (`agent-service/`)
+
+The inner boundary that lets the backend and agent teams develop independently — two frozen OpenAPI
+3.1 documents: **Contract A** (`openapi.yaml`, Backend → Agent Service: create/stream/cancel runs
+over `/v1`, SSE events) and **Contract B** (`internal-tools-openapi.yaml`, Agent → Backend Internal
+Tool API over `/internal`: read business data + validate plans). The agent is a **stateful**
+LangGraph runtime; it pulls business data via Contract B (Variant B) and **proposes** a draft plan
+the backend persists. See [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md).
+
+### 2.3 Frontend (`frontend/`)
 
 Vue 3 + TypeScript + Vite. Today it provides the visual shell — a styled chat input
 (`src/components/AgentChat/`) and animated "torn magazine scrapbook" page backgrounds
@@ -68,7 +88,7 @@ Vue 3 + TypeScript + Vite. Today it provides the visual shell — a styled chat 
 does not yet contain an API client; it will consume the `api/` contract (a dedicated
 frontend-behavior spec is future work).
 
-### 2.3 Domain data (`data/`)
+### 2.4 Domain data (`data/`)
 
 Synthetic seed data the agent reasons over, described in [`README.md`](./README.md):
 
@@ -81,8 +101,10 @@ Synthetic seed data the agent reasons over, described in [`README.md`](./README.
 
 ## 3. Cross-cutting conventions
 
-- **API:** OpenAPI 3.1 under base path `/api/v1`; Bearer JWT auth; SSE for run streaming; standard
-  error envelope and pagination. Details in [`api/SPECIFICATION.md`](./api/SPECIFICATION.md).
+- **APIs:** OpenAPI 3.1. Frontend↔backend under `/api/v1` (Bearer **JWT**); backend↔agent under `/v1`
+  and `/internal` (Bearer **service tokens** + `X-Correlation-ID`). SSE for run streaming; a shared
+  error envelope throughout. Details in [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) and
+  [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md).
 - **Money:** integer `*_rub` (whole rubles), matching the dataset.
 - **IDs:** opaque strings — UUIDs for new entities; seeded groups keep `G-0001`-style ids.
 - **Specs stay in sync with code** ([`AGENTS.md`](./AGENTS.md)): update the relevant module
@@ -91,4 +113,6 @@ Synthetic seed data the agent reasons over, described in [`README.md`](./README.
 ## 4. Design history
 
 - [`docs/superpowers/specs/2026-06-13-travel-agent-api-design.md`](./docs/superpowers/specs/2026-06-13-travel-agent-api-design.md)
-  — approved design rationale behind the API contract.
+  — approved design rationale behind the frontend↔backend API contract.
+- [`docs/superpowers/specs/2026-06-14-backend-agent-api-design.md`](./docs/superpowers/specs/2026-06-14-backend-agent-api-design.md)
+  — approved design rationale behind the backend↔agent contracts (stateful agent, Variant B).
