@@ -2,11 +2,11 @@ from uuid import uuid4
 
 import pytest
 from conftest import register_user
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from travel_backend.database import SessionFactory
 from travel_backend.errors import APIError
-from travel_backend.models import ChatSession, PlanMapPoint, Run, RunEvent, User
+from travel_backend.models import ChatSession, Message, Plan, PlanMapPoint, Run, RunEvent, User
 from travel_backend.services.runs import process_agent_event
 
 
@@ -232,10 +232,12 @@ async def test_invalid_rich_route_content_rejects_complete_plan(
             )
         assert captured.value.code == "validation_error"
         await db.rollback()
-        stored_points = (
-            await db.scalars(select(PlanMapPoint).where(PlanMapPoint.plan_id == run.active_plan_id))
-        ).all()
-        assert stored_points == []
+        plan_count = await db.scalar(
+            select(func.count()).select_from(Plan).where(Plan.run_id == run.id)
+        )
+        point_count = await db.scalar(select(func.count()).select_from(PlanMapPoint))
+        assert plan_count == 0
+        assert point_count == 0
 
 
 async def test_unknown_calendar_link_rejects_plan(client, unique_email):
@@ -264,6 +266,11 @@ async def test_unknown_calendar_link_rejects_plan(client, unique_email):
             )
         assert captured.value.code == "validation_error"
         assert captured.value.details["source"] == "agent_map_calendar_link"
+        await db.rollback()
+        plan_count = await db.scalar(
+            select(func.count()).select_from(Plan).where(Plan.run_id == run.id)
+        )
+        assert plan_count == 0
 
 
 async def test_aggregate_route_content_over_one_megabyte_is_rejected(client, unique_email):
@@ -295,3 +302,156 @@ async def test_aggregate_route_content_over_one_megabyte_is_rejected(client, uni
             )
         assert captured.value.code == "validation_error"
         assert "1 MB" in captured.value.details["reason"]
+
+
+async def test_invalid_rich_update_rolls_back_existing_route(client, unique_email):
+    await register_user(client, unique_email)
+    run = await create_agent_run(unique_email)
+    async with SessionFactory() as db:
+        persisted_run = await db.get(Run, run.id)
+        plan = Plan(
+            user_id=persisted_run.user_id,
+            session_id=persisted_run.session_id,
+            run_id=persisted_run.id,
+            status="ready",
+        )
+        db.add(plan)
+        await db.flush()
+        point = PlanMapPoint(
+            plan_id=plan.id,
+            name="Existing stop",
+            kind="stop",
+            lat=41.0,
+            lng=29.0,
+            order=0,
+        )
+        db.add(point)
+        persisted_run.active_plan_id = plan.id
+        await db.commit()
+        plan_id = plan.id
+        point_id = point.id
+
+    invalid_point = {
+        "name": "Replacement",
+        "kind": "stop",
+        "lat": 41.1,
+        "lng": 29.1,
+        "order": 0,
+        "calendar_event_ref": "missing",
+    }
+    async with SessionFactory() as db:
+        persisted_run = await db.get(Run, run.id)
+        with pytest.raises(APIError):
+            await process_agent_event(
+                db,
+                persisted_run,
+                "plan",
+                {
+                    "agent_run_id": persisted_run.agent_run_id,
+                    "plan": draft_plan([invalid_point]),
+                },
+            )
+        await db.rollback()
+
+    async with SessionFactory() as db:
+        points = (
+            await db.scalars(
+                select(PlanMapPoint)
+                .where(PlanMapPoint.plan_id == plan_id)
+                .order_by(PlanMapPoint.order)
+            )
+        ).all()
+    assert [point.id for point in points] == [point_id]
+    assert points[0].name == "Existing stop"
+
+
+async def test_map_serializer_keeps_html_as_text_and_filters_private_metadata(
+    client,
+    unique_email,
+):
+    _, headers = await register_user(client, unique_email)
+    run = await create_agent_run(unique_email)
+    html_text = "<script>alert('plain text')</script>"
+    async with SessionFactory() as db:
+        persisted_run = await db.get(Run, run.id)
+        await process_agent_event(
+            db,
+            persisted_run,
+            "plan",
+            {
+                "agent_run_id": persisted_run.agent_run_id,
+                "plan": draft_plan(
+                    [
+                        {
+                            "name": "Text-only stop",
+                            "kind": "stop",
+                            "lat": 41.0,
+                            "lng": 29.0,
+                            "order": 0,
+                            "summary": html_text,
+                        }
+                    ]
+                ),
+            },
+        )
+        await db.commit()
+        plan_id = persisted_run.active_plan_id
+        point = await db.scalar(select(PlanMapPoint).where(PlanMapPoint.plan_id == plan_id))
+        point.details = {
+            **(point.details or {}),
+            "agent_message_id": "private-agent-id",
+            "calendar_event_ref": "private-link",
+            "authorization": "Bearer private",
+        }
+        await db.commit()
+
+    response = await client.get(f"/api/v1/plans/{plan_id}/map", headers=headers)
+    assert response.status_code == 200
+    public_point = response.json()["points"][0]
+    assert public_point["summary"] == html_text
+    assert public_point["description"] == html_text
+    assert "agent_message_id" not in public_point
+    assert "calendar_event_ref" not in public_point
+    assert "authorization" not in public_point
+
+
+async def test_backend_plan_ready_text_uses_run_locale(client, unique_email):
+    await register_user(client, unique_email)
+    run = await create_agent_run(unique_email)
+    async with SessionFactory() as db:
+        persisted_run = await db.get(Run, run.id)
+        persisted_run.input_payload = {
+            **persisted_run.input_payload,
+            "locale": "en-US",
+        }
+        plan_payload = draft_plan(
+            [
+                {
+                    "name": "Istanbul",
+                    "kind": "destination",
+                    "lat": 41.0082,
+                    "lng": 28.9784,
+                    "order": 0,
+                }
+            ]
+        )
+        plan_payload["decision_rationale"] = None
+        await process_agent_event(
+            db,
+            persisted_run,
+            "plan",
+            {
+                "agent_run_id": persisted_run.agent_run_id,
+                "plan": plan_payload,
+            },
+        )
+        await db.commit()
+        plan = await db.get(Plan, persisted_run.active_plan_id)
+        plan_message = await db.scalar(
+            select(Message).where(
+                Message.run_id == persisted_run.id,
+                Message.plan_ref.is_not(None),
+            )
+        )
+    assert plan.summary == "Ready travel plan"
+    assert plan_message.content == "The travel plan is ready."

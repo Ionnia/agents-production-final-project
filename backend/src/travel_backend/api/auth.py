@@ -1,7 +1,7 @@
 from datetime import UTC
 
 from fastapi import APIRouter, Response
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..config import get_settings
 from ..errors import APIError
@@ -83,8 +83,21 @@ async def refresh(body: RefreshRequest, db: Database) -> dict:
     if user is None:
         raise APIError(401, "unauthorized")
     new_refresh, replacement = await issue_refresh_token(db, user.id, settings)
-    entity.revoked_at = now
-    entity.replaced_by_hash = replacement.token_hash
+    claimed = await db.execute(
+        update(RefreshToken)
+        .where(
+            RefreshToken.id == entity.id,
+            RefreshToken.revoked_at.is_(None),
+        )
+        .values(
+            revoked_at=now,
+            replaced_by_hash=replacement.token_hash,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        await db.rollback()
+        raise APIError(401, "unauthorized")
     access, expires_in = create_access_token(user.id, settings)
     await db.commit()
     return {

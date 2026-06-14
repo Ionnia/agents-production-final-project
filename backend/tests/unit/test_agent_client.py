@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from travel_backend.clients.agent_service import AgentServiceClient
+from travel_backend.clients.agent_service import MAX_AGENT_SSE_EVENT_BYTES, AgentServiceClient
 from travel_backend.config import Settings
 from travel_backend.errors import APIError
 
@@ -83,6 +83,34 @@ async def test_agent_client_maps_transport_timeout_to_controlled_error():
         await service.create_run({"mode": "qa"}, "corr")
     assert captured.value.status_code == 504
     assert captured.value.code == "timeout"
+    await service.close()
+
+
+async def test_agent_client_rejects_oversized_sse_event():
+    oversized = "x" * (MAX_AGENT_SSE_EVENT_BYTES + 1)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=f"event: message\ndata: {oversized}\n\n",
+        )
+
+    service = AgentServiceClient(settings())
+    await service.client.aclose()
+    service.client = httpx.AsyncClient(
+        base_url="http://agent.test",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(APIError) as captured:
+        _ = [
+            event
+            async for event in service.stream(
+                "/v1/runs/agent-1/stream",
+                "corr",
+            )
+        ]
+    assert captured.value.code == "agent_unavailable"
     await service.close()
 
 

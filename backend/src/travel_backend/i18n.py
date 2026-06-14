@@ -19,6 +19,9 @@ MESSAGES = {
         "plan_invalid": "Предложенный план не прошёл проверку.",
         "constraints_conflict": "Не удалось подобрать вариант без нарушения ограничений.",
         "escalation": "Для продолжения требуется дополнительная проверка специалистом.",
+        "clarifying_answer_summary": "Ответ на уточняющий вопрос",
+        "ready_plan_summary": "Готовый план поездки",
+        "plan_ready": "План поездки готов.",
     },
     "en-US": {
         "validation_error": "Check the submitted data.",
@@ -40,6 +43,9 @@ MESSAGES = {
         "plan_invalid": "The proposed plan failed validation.",
         "constraints_conflict": "No option satisfies all constraints.",
         "escalation": "Additional specialist review is required.",
+        "clarifying_answer_summary": "Clarifying-question answer",
+        "ready_plan_summary": "Ready travel plan",
+        "plan_ready": "The travel plan is ready.",
     },
 }
 

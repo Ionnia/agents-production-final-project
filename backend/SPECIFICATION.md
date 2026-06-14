@@ -10,7 +10,7 @@ runtime implementation lives in the installable `travel_backend` package.
 
 ## Responsibilities
 
-- JWT access authentication, rotating hashed refresh tokens, and user ownership checks.
+- JWT access authentication, atomically rotating hashed refresh tokens, and user ownership checks.
 - Persistent users, sessions, runs, messages, groups, plans, map points, calendar events, and SSE
   event history.
 - Read-only internal access to group context and offer search, protected by
@@ -49,7 +49,9 @@ service-token defaults.
 Each backend run owns a persistent ordered event log. Frontend SSE replays events after
 `Last-Event-ID` and closes after a terminal run status. Stream tickets are stored only as SHA-256
 hashes, expire before first use, receive a short reconnect lease after consumption, and are
-validated against the owning user recorded on the run before they are consumed.
+validated against the owning user recorded on the run before they are consumed. First consumption
+uses a conditional database update, so concurrent initial connections cannot both redeem a ticket.
+Run event numbers are allocated through an atomic per-run database counter rather than `max + 1`.
 
 Agent `ready` events are not forwarded directly. The backend loads referenced offers, recalculates
 cost, applies hard constraints, writes the plan/map/calendar atomically, and only then emits
@@ -68,11 +70,17 @@ vocabulary is limited to the seven event types frozen in `api/openapi.yaml`.
 Agent route content rejects unknown fields, invalid types, invalid confidence values, duplicate
 orders/references, unsafe datetime forms, and oversized text/list/aggregate payloads. Content is
 returned as plain strings and lists; the backend does not treat it as HTML or verify its factual
-truth. The current runtime does not support a `route_preview` event.
+truth. Persisted JSON details are filtered through the frontend contract's public field allowlist
+when serialized. Individual Agent SSE event frames are bounded to 1.1 MB, and private Agent message
+IDs are limited to the existing 200-character storage boundary. Clarifying questions are rebuilt
+from their frozen public fields before persistence and relay. The current runtime does not support
+a `route_preview` event.
 
 Agent HTTP calls and SSE reads execute without an open SQLAlchemy session. Run payload loading,
 agent mapping, each semantic event, terminal-state handling, and failure handling use separate
-short-lived transactions while preserving sequential event ordering.
+short-lived transactions while preserving sequential event ordering. Agent cancellation also
+releases its request database session before the upstream HTTP call and conditionally commits the
+terminal state afterward, preventing later Agent events from being persisted.
 
 Backend-generated run failure messages, including plan failure events, use the locale captured
 when the run was created. Russian remains the default and `en-US` is supported.
@@ -81,7 +89,8 @@ when the run was created. Russian remains the default and `en-US` is supported.
 
 Request logging records no bodies, query strings, authorization headers, passwords, refresh
 tokens, or stream tickets. Sensitive token inputs have bounded request schemas, and service-token
-comparison is constant-time.
+comparison is constant-time. Credentialed CORS requires an explicit trusted-origin allowlist and
+permits only the public API's `GET` and `POST` methods.
 
 Frontend HTTP errors are restricted to the frozen `api/openapi.yaml` enum. Backend-only
 `timeout`/`agent_unavailable` failures are normalized to HTTP 500 `internal`; persisted SSE errors
@@ -92,7 +101,8 @@ refresh rotation/replay, ticket hashing/scope/replay/expiry, persisted SSE recon
 error handling, event normalization, plan persistence gating, deterministic seed import, read-only
 internal calls, business constraints, localization fallback, migration upgrades, process-isolated
 test databases, rich route-content validation and serialization, private calendar-link resolution,
-and placeholder-only example secrets.
+placeholder-only example secrets, concurrent refresh/ticket/event behavior, reverse-order
+independence, and two-worker pytest execution.
 
 ## Development
 

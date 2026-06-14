@@ -44,7 +44,7 @@ def test_fresh_database_migrates_to_head(tmp_path):
     database = tmp_path / "fresh.db"
     run_alembic(database, "upgrade", "head")
     current = run_alembic(database, "current")
-    assert "20260614_0004 (head)" in current.stdout
+    assert "20260614_0005 (head)" in current.stdout
     with sqlite3.connect(database) as connection:
         message_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(messages)").fetchall()
@@ -52,8 +52,10 @@ def test_fresh_database_migrates_to_head(tmp_path):
         map_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(plan_map_points)").fetchall()
         }
+        run_columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)").fetchall()}
     assert "agent_message_id" in message_columns
     assert "details" in map_columns
+    assert "event_sequence" in run_columns
 
 
 def test_revision_0002_database_migrates_to_head(tmp_path):
@@ -69,7 +71,7 @@ def test_revision_0002_database_migrates_to_head(tmp_path):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(messages)").fetchall()}
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     assert "agent_message_id" in columns
-    assert revision == "20260614_0004"
+    assert revision == "20260614_0005"
 
 
 def test_revision_0003_database_adds_map_point_details(tmp_path):
@@ -87,7 +89,32 @@ def test_revision_0003_database_adds_map_point_details(tmp_path):
         }
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
     assert "details" in columns
-    assert revision == "20260614_0004"
+    assert revision == "20260614_0005"
+
+
+def test_revision_0004_backfills_run_event_sequence(tmp_path):
+    database = tmp_path / "revision-0004.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE runs (id VARCHAR PRIMARY KEY)")
+        connection.execute(
+            "CREATE TABLE run_events ("
+            "id VARCHAR PRIMARY KEY, run_id VARCHAR NOT NULL, sequence INTEGER NOT NULL)"
+        )
+        connection.execute("INSERT INTO runs(id) VALUES ('run-1'), ('run-2')")
+        connection.execute(
+            "INSERT INTO run_events(id, run_id, sequence) VALUES "
+            "('event-1', 'run-1', 2), ('event-2', 'run-1', 5)"
+        )
+        connection.execute(
+            "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
+        )
+        connection.execute("INSERT INTO alembic_version(version_num) VALUES ('20260614_0004')")
+    run_alembic(database, "upgrade", "head")
+    with sqlite3.connect(database) as connection:
+        sequences = dict(connection.execute("SELECT id, event_sequence FROM runs").fetchall())
+        revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
+    assert sequences == {"run-1": 5, "run-2": 0}
+    assert revision == "20260614_0005"
 
 
 def test_startup_does_not_create_schema_without_migrations(tmp_path):

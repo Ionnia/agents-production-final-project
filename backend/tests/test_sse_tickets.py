@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from uuid import uuid4
 
@@ -117,3 +118,37 @@ async def test_stream_ticket_owner_must_match_run_owner(client, unique_email):
         ticket = await db.get(StreamTicket, ticket_id)
         assert ticket.consumed_at is None
         assert ticket.lease_expires_at is None
+
+
+async def test_stream_ticket_first_use_is_atomic_under_concurrency(client, unique_email):
+    _, headers = await register_user(client, unique_email)
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        session = ChatSession(user_id=user.id, summary="Concurrent ticket")
+        db.add(session)
+        await db.flush()
+        run = Run(
+            session_id=session.id,
+            user_id=user.id,
+            correlation_id=str(uuid4()),
+            mode="qa",
+            status="completed",
+            input_payload={"message": "test"},
+        )
+        db.add(run)
+        await db.commit()
+        run_id = run.id
+
+    issued = await client.post(f"/api/v1/chat/{run_id}/stream-ticket", headers=headers)
+    raw_ticket = issued.json()["ticket"]
+    responses = await asyncio.gather(
+        client.get(f"/api/v1/chat/{run_id}/stream?ticket={raw_ticket}"),
+        client.get(f"/api/v1/chat/{run_id}/stream?ticket={raw_ticket}"),
+    )
+    assert sorted(response.status_code for response in responses) == [200, 401]
+
+    reconnect = await client.get(
+        f"/api/v1/chat/{run_id}/stream?ticket={raw_ticket}",
+        headers={"Last-Event-ID": "0"},
+    )
+    assert reconnect.status_code == 200

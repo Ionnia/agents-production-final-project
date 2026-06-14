@@ -9,6 +9,8 @@ from ..config import Settings
 from ..errors import APIError
 from ..schemas import AgentEvent
 
+MAX_AGENT_SSE_EVENT_BYTES = 1_100_000
+
 
 @dataclass
 class CreatedRun:
@@ -108,6 +110,7 @@ class AgentClient:
                 event_name: str | None = None
                 event_id: str | None = None
                 data_lines: list[str] = []
+                frame_size = 0
                 async for line in response.aiter_lines():
                     if not line:
                         if event_name and data_lines:
@@ -119,7 +122,11 @@ class AgentClient:
                         event_name = None
                         event_id = None
                         data_lines = []
+                        frame_size = 0
                         continue
+                    frame_size += len(line.encode("utf-8")) + 1
+                    if frame_size > MAX_AGENT_SSE_EVENT_BYTES:
+                        raise APIError(502, "agent_unavailable")
                     if line.startswith("event:"):
                         event_name = line[6:].strip()
                     elif line.startswith("id:"):
