@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Final look — frosted glass + dithered background</title>
+<style>
+  :root { color-scheme: dark; --accent:#d97757;
+    /* one shared glass token, used by every surface */
+    --glass-bg:rgba(255,255,255,.30); --glass-blur:7px; --glass-sat:1; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; }
+  body { background:#0c0a08; overflow:hidden; cursor:crosshair;
+    font:15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+  .layer { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; }
+  #color { -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; -webkit-mask-image:var(--lens); mask-image:var(--lens);
+    -webkit-mask-size:var(--d) var(--d); mask-size:var(--d) var(--d);
+    -webkit-mask-position:var(--mpx) var(--mpy); mask-position:var(--mpx) var(--mpy); }
+
+  .glass { background:var(--glass-bg);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-sat)); backdrop-filter:blur(var(--glass-blur)) saturate(var(--glass-sat));
+    box-shadow:0 18px 50px rgba(0,0,0,.35); color:#241c14; }
+
+  .menu-btn { position:fixed; top:20px; left:20px; z-index:30; width:44px; height:44px; border-radius:14px; display:grid; place-items:center; cursor:pointer; }
+  .menu-btn svg{ width:20px; height:20px; }
+
+  .panel { position:fixed; top:0; left:0; bottom:0; width:308px; z-index:25; padding:16px; display:flex; flex-direction:column; gap:13px;
+    border-radius:0 22px 22px 0; transform:translateX(-104%); transition:transform .42s cubic-bezier(.5,.05,.1,1); }
+  body.panel-open .panel { transform:translateX(0); }
+  .panel .title { font-weight:700; padding:6px 4px 0 54px; color:#1c150f; }
+  .newchat { display:flex; gap:9px; padding:11px 13px; border-radius:13px; cursor:pointer; font-weight:600; background:var(--accent); color:#fff; border:none; }
+  .search { padding:9px 12px; border-radius:11px; background:rgba(255,255,255,.4); border:none; color:#241c14; font-size:13.5px; }
+  .search::placeholder{ color:#6b6258; }
+  .sect { display:flex; flex-direction:column; gap:2px; overflow:auto; }
+  .sect h4 { margin:10px 4px 3px; font-size:11px; text-transform:uppercase; letter-spacing:.1em; color:#7a6f62; font-weight:700; }
+  .item { display:flex; gap:9px; padding:8px 10px; border-radius:9px; cursor:pointer; color:#3a3024; font-size:14px; }
+  .item:hover { background:rgba(255,255,255,.4); }
+  .item small{ color:#8a7f70; margin-left:auto; font-size:11.5px; }
+
+  .hero { position:fixed; left:0; right:0; top:31%; text-align:center; z-index:11; transition:opacity .35s, transform .35s; }
+  .hero h1 { font-size:38px; font-weight:600; letter-spacing:-.8px; margin:0; color:#fff; text-shadow:0 2px 30px rgba(0,0,0,.6); }
+  .hero p { color:#e7ddcf; margin:10px 0 0; text-shadow:0 1px 14px rgba(0,0,0,.6); }
+  body.chat .hero { opacity:0; transform:translateY(-14px); pointer-events:none; }
+
+  .thread { position:fixed; left:50%; transform:translateX(-50%); top:84px; bottom:120px; width:min(720px,92%); z-index:12;
+    display:flex; flex-direction:column; gap:13px; overflow:auto; opacity:0; transition:opacity .45s ease .15s; pointer-events:none; }
+  body.chat .thread { opacity:1; pointer-events:auto; }
+  .msg { max-width:80%; padding:12px 15px; font-size:14.5px; line-height:1.5; }
+  .msg.bot { align-self:flex-start; border-radius:18px 18px 18px 6px; }      /* glass */
+  .msg.user { align-self:flex-end; background:var(--accent); color:#fff; border-radius:18px 18px 6px 18px; }
+  .qchips { align-self:flex-start; display:flex; flex-wrap:wrap; gap:8px; max-width:90%; }
+  .chip { padding:8px 14px; border-radius:999px; font-size:13.5px; cursor:pointer; }     /* glass */
+  .chip:hover { background:rgba(255,255,255,.5); }
+
+  .composer { position:fixed; left:50%; transform:translateX(-50%); width:min(680px,92%); z-index:20; top:48%;
+    border-radius:90px / 18px; padding:6px; transition:top .6s cubic-bezier(.55,.06,.12,1); }
+  body.chat .composer { top:calc(100% - 92px); }
+  .composer .row { display:flex; align-items:flex-end; gap:10px; padding:9px 12px; }
+  .composer textarea { flex:1; resize:none; border:none; background:transparent; color:#241c14; font:inherit; font-size:16px; outline:none; padding:8px 8px; max-height:120px; }
+  .composer textarea::placeholder{ color:rgba(40,30,20,.55); }
+  .send { width:40px; height:40px; flex:none; border-radius:50%; border:none; cursor:pointer; color:#fff; font-size:18px;
+    background:linear-gradient(160deg,#e2825f,#cf5f3f); box-shadow:0 6px 16px rgba(207,95,63,.45); display:grid; place-items:center; }
+  .hint2 { text-align:center; color:rgba(40,30,20,.5); font-size:11px; padding:0 0 7px; }
+
+  .devbar { position:fixed; bottom:14px; right:14px; z-index:50; display:flex; gap:7px; }
+  .devbar button { font:inherit; font-size:12.5px; color:#e8e2d6; background:rgba(14,11,9,.8); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+    border:1px solid rgba(255,255,255,.14); border-radius:8px; padding:7px 11px; cursor:pointer; }
+  .fps { position:fixed; bottom:14px; left:14px; z-index:50; font:11px ui-monospace,monospace; color:#7fd99a; background:rgba(0,0,0,.4); padding:3px 8px; border-radius:6px; }
+</style>
+</head>
+<body>
+  <img id="mono" class="layer" alt="">
+  <img id="color" class="layer" alt="">
+
+  <div class="menu-btn glass" onclick="document.body.classList.toggle('panel-open')" title="Меню">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </div>
+
+  <aside class="panel glass">
+    <div class="title">Маршруты</div>
+    <button class="newchat">＋ Новый чат</button>
+    <input class="search" placeholder="Поиск по чатам…">
+    <div class="sect">
+      <h4>История</h4>
+      <div class="item">💬 Тоскана на 5 дней <small>вт</small></div>
+      <div class="item">💬 Северное сияние <small>пн</small></div>
+      <div class="item">💬 Острова Греции <small>3д</small></div>
+      <h4>Группы</h4>
+      <div class="item">👥 Семья Ивановых <small>4</small></div>
+      <div class="item">👥 Друзья — Бали <small>6</small></div>
+      <h4>Планы</h4>
+      <div class="item">🗺 Рим → Флоренция <small>готов</small></div>
+    </div>
+  </aside>
+
+  <div class="hero">
+    <h1>Куда отправимся?</h1>
+    <p>Опишите поездку — соберу маршрут, отели и туры под вашу группу.</p>
+  </div>
+
+  <div class="thread">
+    <div class="msg user">Хотим на море в сентябре, бюджет 200к на двоих, из Москвы.</div>
+    <div class="msg bot glass">Отличная идея! Чтобы подобрать лучший вариант, пара уточнений 👇</div>
+    <div class="qchips">
+      <div class="chip glass">Пляжный отдых</div>
+      <div class="chip glass">Город + море</div>
+      <div class="chip glass">Острова</div>
+    </div>
+  </div>
+
+  <div class="composer glass">
+    <div class="row">
+      <textarea id="ta" rows="1" placeholder="Спланируй путешествие…"></textarea>
+      <button class="send" onclick="document.body.classList.add('chat')">↑</button>
+    </div>
+    <div class="hint2">Enter — отправить · Shift+Enter — новая строка</div>
+  </div>
+
+  <div class="devbar">
+    <button onclick="document.body.classList.add('chat')">▶ Send</button>
+    <button onclick="document.body.classList.remove('chat')">↺ Reset</button>
+    <button onclick="document.body.classList.toggle('panel-open')">☰ Panel</button>
+    <button onclick="randomScene()">🎲 Scene</button>
+  </div>
+  <div class="fps" id="fps">– fps</div>
+
+<script>
+const ORDER=['france','greece','italy','japan','china','india','russia','usa'];
+const mono=document.getElementById('mono'), color=document.getElementById('color'), fpsEl=document.getElementById('fps');
+const LENS='radial-gradient(closest-side, rgba(0,0,0,1) 0%, rgba(0,0,0,.97) 35%, rgba(0,0,0,.85) 55%, rgba(0,0,0,.62) 70%, rgba(0,0,0,.38) 82%, rgba(0,0,0,.20) 90%, rgba(0,0,0,.07) 96%, rgba(0,0,0,0) 100%)';
+const RAD=80; let mx=-9999,my=-9999,dirty=false;
+color.style.setProperty('--lens',LENS); color.style.setProperty('--d',(2*RAD)+'px');
+window.addEventListener('mousemove', e=>{ mx=e.clientX; my=e.clientY; dirty=true; });
+function setScene(n){ mono.src='../../frontend/public/backgrounds/'+n+'-mono.webp'; color.src='../../frontend/public/backgrounds/'+n+'-color.webp'; }
+function randomScene(){ setScene(ORDER[Math.floor(Math.random()*ORDER.length)]); }
+let last=performance.now(),facc=0,fn=0;
+function loop(now){ facc+=now-last; fn++; if(facc>400){ fpsEl.textContent=Math.round(1000/(facc/fn))+' fps'; facc=0; fn=0; } last=now;
+  if(dirty){ const s=color.style; s.setProperty('--mpx',(mx-RAD)+'px'); s.setProperty('--mpy',(my-RAD)+'px'); dirty=false; }
+  requestAnimationFrame(loop); }
+randomScene(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
