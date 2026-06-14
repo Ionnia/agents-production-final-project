@@ -16,7 +16,7 @@ onMounted(() => { if (!sessions.list.length) sessions.loadList() })
     <template v-if="sessions.loading && !sessions.list.length"><Skeleton v-for="i in 3" :key="i" h="32px" /></template>
     <EmptyState v-else-if="!sessions.list.length" title="Пока нет чатов" />
     <RouterLink v-for="s in filtered" :key="s.id" class="item" :to="`/c/${s.id}`" @click="emit('navigate')">
-      💬 <span class="lbl">{{ s.summary }}</span>
+      <span class="lbl">{{ s.summary }}</span>
     </RouterLink>
   </div>
 </template>

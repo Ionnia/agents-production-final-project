@@ -12,7 +12,7 @@ onMounted(() => { if (!groups.list.length) groups.loadList() })
     <h4>Группы</h4>
     <EmptyState v-if="!groups.list.length" title="Нет групп" hint="Создайте группу путешественников" />
     <div v-for="g in filtered" :key="g.id" class="item">
-      👥 <span class="lbl">{{ g.name }}</span> <small>{{ g.member_count }}</small>
+      <span class="lbl">{{ g.name }}</span> <small>{{ g.member_count }}</small>
     </div>
   </div>
 </template>

@@ -10,11 +10,19 @@ let map: maplibregl.Map | null = null
 let markers: maplibregl.Marker[] = []
 let styleLoaded = false
 
-// Free, no-API-key raster style (CARTO dark basemap).
-const STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: { carto: { type: 'raster', tiles: ['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap, © CARTO' } },
-  layers: [{ id: 'carto', type: 'raster', source: 'carto' }],
+// Free, no-API-key CARTO dark vector basemap. Vector (not raster) so we can
+// relabel it in Russian after load — raster tiles bake the labels into pixels.
+const STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+
+// Prefer the Russian name on every label layer, falling back to the local name.
+const RU_LABEL = ['coalesce', ['get', 'name:ru'], ['get', 'name']] as maplibregl.ExpressionSpecification
+function localizeLabels() {
+  if (!map) return
+  for (const layer of map.getStyle().layers ?? []) {
+    if (layer.type === 'symbol' && layer.layout?.['text-field'] != null) {
+      try { map.setLayoutProperty(layer.id, 'text-field', RU_LABEL) } catch { /* layer may lack text-field at runtime */ }
+    }
+  }
 }
 
 function render() {
@@ -42,7 +50,7 @@ function render() {
 
 onMounted(() => {
   map = new maplibregl.Map({ container: el.value!, style: STYLE, center: [37.6, 55.75], zoom: 3, attributionControl: { compact: true } })
-  map.on('load', () => { styleLoaded = true; render() })
+  map.on('load', () => { styleLoaded = true; localizeLabels(); render() })
 })
 watch(() => props.points, render, { deep: true })
 onBeforeUnmount(() => map?.remove())

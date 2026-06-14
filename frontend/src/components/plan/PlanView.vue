@@ -9,6 +9,7 @@ import Skeleton from '../ui/Skeleton.vue'
 import { usePlansStore } from '../../stores/plans'
 import { useToasts } from '../../composables/useToasts'
 import { ApiClientError } from '../../api/client'
+import { planStatusLabel } from '../../utils/planStatus'
 
 const props = defineProps<{ planId: string }>()
 const plans = usePlansStore(); const router = useRouter(); const { push } = useToasts()
@@ -33,7 +34,7 @@ async function onRebuild() {
       <button class="back glass" @click="router.back()">←</button>
       <div v-if="plans.current" class="ti">
         <h1>{{ plans.current.destination || 'Маршрут' }}</h1>
-        <span class="status" :data-s="plans.current.status">{{ plans.current.status }}</span>
+        <span class="status" :data-s="plans.current.status">{{ planStatusLabel(plans.current.status) }}</span>
       </div>
     </header>
 

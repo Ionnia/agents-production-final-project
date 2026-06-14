@@ -12,3 +12,12 @@ body {
 }
 *, *::before, *::after { box-sizing: border-box; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* UI chrome (headings, labels, buttons) isn't selectable; real content opts back in. */
+body { -webkit-user-select: none; user-select: none; }
+input, textarea, [contenteditable="true"], .msg { -webkit-user-select: text; user-select: text; }
+
+/* Non-selectable text/images otherwise become draggable (a translucent copy
+   follows the cursor); disable the native element/image drag everywhere. */
+* { -webkit-user-drag: none; }
+img { -webkit-user-drag: none; }

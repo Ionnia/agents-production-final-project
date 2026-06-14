@@ -33,8 +33,8 @@ pnpm gen:api        # regenerate src/api/schema.d.ts from ../api/openapi.yaml
 
 - **Prerender script:** `scripts/prerender-backgrounds.mjs` — uses `@napi-rs/canvas` to render 8 travel scenes (france, greece, italy, japan, china, india, russia, usa) as dithered images.
 - **Output:** `public/backgrounds/<scene>-mono.webp` (grayscale dithered) and `<scene>-color.webp` (full-color dithered). 16 files total, served as static assets.
-- **Component:** `src/components/background/DitheredBackground.vue` — picks a random scene on each load, stacks the two layers; the color layer is masked with a CSS radial-gradient (lens) whose position/size is driven by CSS custom properties (`--mpx`, `--mpy`, `--d`). On mount it also sets the global `--accent` / `--accent-press` tokens from a per-scene `ACCENTS` map (china=jade, russia=blue, usa=dark blue, india=soft pink, japan=reddish pink, italy=terracotta, france=goldish yellow, greece=Aegean blue), so all accent-tinted UI (buttons, user bubbles, map route, links) matches the active background.
-- **Cursor lens composable:** `src/composables/useCursorLens.ts` — listens to `pointermove`, writes `--mpx`/`--mpy`/`--d` onto the color `<img>` element once per `requestAnimationFrame`. `lensVars(x, y, r)` is pure and tested.
+- **Component:** `src/components/background/DitheredBackground.vue` — picks a random scene on each load, stacks the two layers; the color layer is revealed under the cursor by `useCursorLens` (radial-gradient masks). On mount it also sets the global `--accent` / `--accent-press` tokens from a per-scene `ACCENTS` map (china=jade, russia=blue, usa=dark blue, india=soft pink, japan=reddish pink, italy=terracotta, france=goldish yellow, greece=Aegean blue), so all accent-tinted UI (buttons, user bubbles, map route, links) matches the active background.
+- **Cursor lens composable:** `src/composables/useCursorLens.ts` — listens to `pointermove` and imperatively writes a stack of radial-gradient mask layers onto the color `<img>` once per `requestAnimationFrame`: a fully-revealed head under the cursor plus a sampled trail of recent positions whose mask alpha decays over each point's own lifetime, so the revealed streak fades out behind the cursor. Points laid while the left mouse button is held get `SLOW_TRAIL_MS` (≈1600 ms) instead of `TRAIL_MS` (≈300 ms), so they linger — and keep fading slowly even after the button is released. The reveal radius scales with cursor speed (eased from `LEAK_RADIUS` up to `MAX_RADIUS`). Collapses to just the head (no trail) under `prefers-reduced-motion`. `lensGradient(a)` builds an alpha-scaled gradient; `lensVars(x, y, r)` is pure and tested.
 
 ## 3. Glass design system
 
@@ -142,7 +142,7 @@ Login/register form (tab-switched). On success navigates to the `redirect` query
 ### Plan view (`src/components/plan/`)
 
 - **`PlanView.vue`** — fixed full-screen layout: sticky header (back button + destination + status), two-column grid (map/itinerary pane left, details right; stacks on ≤ 860 px). Loads plan + map + calendar on mount.
-- **`MapView.vue`** — MapLibre GL canvas rendering `MapPoint[]`; `origin` (blue), `destination` (orange), `stop` (green) markers with popups.
+- **`MapView.vue`** — MapLibre GL canvas rendering `MapPoint[]` as accent-coloured pin markers with popups, plus a dashed accent route line. Basemap is CARTO's free (no-API-key) **vector** dark style; on load every symbol layer's `text-field` is rewritten to `coalesce(name:ru, name)` so map labels display in Russian. Plan status text is localised via `utils/planStatus.ts` (`planStatusLabel`), shared with the side-panel `PlanList`.
 - **`ItineraryView.vue`** — day-grouped list of `CalendarEvent[]` with time, title, description, location, and price.
 - **`OfferCard.vue`** — renders a `FlightSel`, `HotelSel`, or `TourSel` in a glass card.
 - **`PlanEditBar.vue`** — input to stage `AddPoint` cities + "Rebuild route" button; calls `plans.modify()` and emits `rebuild(runId)`.
@@ -192,7 +192,7 @@ frontend/
     stores/
       auth.ts  sessions.ts  groups.ts  plans.ts  chat.ts  (+ *.spec.ts each)
     composables/
-      useCursorLens.ts  (+ .spec.ts)   Cursor → CSS mask vars via rAF
+      useCursorLens.ts  (+ .spec.ts)   Cursor → fading reveal-trail mask layers via rAF
       useToasts.ts      (+ .spec.ts)   Toast singleton composable
     components/
       background/DitheredBackground.vue

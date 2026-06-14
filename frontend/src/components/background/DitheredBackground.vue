@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, useTemplateRef } from 'vue'
-import { useCursorLens, LENS_GRADIENT } from '../../composables/useCursorLens'
+import { useCursorLens } from '../../composables/useCursorLens'
 
 const SCENES = ['france', 'greece', 'italy', 'japan', 'china', 'india', 'russia', 'usa'] as const
 // Each scene drives the app accent so buttons, bubbles, etc. match its background.
@@ -33,17 +33,20 @@ useCursorLens(() => colorEl.value)
 <template>
   <div class="bg" aria-hidden="true">
     <img class="layer" :src="base" alt="" />
-    <img ref="colorEl" class="layer color" :src="color" alt="" :style="{ '--lens': LENS_GRADIENT }" />
+    <img ref="colorEl" class="layer color" :src="color" alt="" />
   </div>
 </template>
 
 <style scoped>
 .bg { position: fixed; inset: 0; z-index: 0; background: var(--bg-base); }
 .layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* useCursorLens drives the mask layers (reveal + fading trail) imperatively.
+   A zero-sized mask-image must be present from load so the color layer stays
+   fully hidden until the first pointer move (mask-size alone has no effect
+   without a mask-image). */
 .color {
-  -webkit-mask-image: var(--lens); mask-image: var(--lens);
+  -webkit-mask-image: linear-gradient(#000, #000); mask-image: linear-gradient(#000, #000);
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
-  -webkit-mask-size: var(--d, 0) var(--d, 0); mask-size: var(--d, 0) var(--d, 0);
-  -webkit-mask-position: var(--mpx, -9999px) var(--mpy, -9999px); mask-position: var(--mpx, -9999px) var(--mpy, -9999px);
+  -webkit-mask-size: 0 0; mask-size: 0 0;
 }
 </style>

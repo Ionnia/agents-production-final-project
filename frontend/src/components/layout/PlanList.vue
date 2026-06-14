@@ -5,6 +5,7 @@ import { api } from '../../api/endpoints'
 import type { PlanSummary } from '../../api/types'
 import { useGroupsStore } from '../../stores/groups'
 import EmptyState from '../ui/EmptyState.vue'
+import { planStatusLabel } from '../../utils/planStatus'
 const groups = useGroupsStore()
 const plans = ref<PlanSummary[]>([])
 const emit = defineEmits<{ navigate: [] }>()
@@ -19,7 +20,7 @@ onMounted(async () => {
     <h4>Планы</h4>
     <EmptyState v-if="!plans.length" title="Нет планов" />
     <RouterLink v-for="p in plans" :key="p.plan_id" class="item" :to="`/plans/${p.plan_id}`" @click="emit('navigate')">
-      🗺 <span class="lbl">{{ p.destination || 'Маршрут' }}</span> <small>{{ p.status }}</small>
+      <span class="lbl">{{ p.destination || 'Маршрут' }}</span> <small>{{ planStatusLabel(p.status) }}</small>
     </RouterLink>
   </div>
 </template>
