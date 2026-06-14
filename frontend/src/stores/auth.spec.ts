@@ -13,7 +13,6 @@ it('logs in, exposes the token, and restores from storage', async () => {
   await auth.login('demo@travel.app', 'password')
   expect(auth.isAuthenticated).toBe(true)
   expect(auth.accessToken).toBeTruthy()
-  const auth2 = useAuthStore()
   setActivePinia(createPinia())
   const fresh = useAuthStore()
   await fresh.restore()

@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import type { ChatRequest, ModifyRequest, CalendarEvent, MapPoint } from '../api/types'
+import type { ChatRequest, ModifyRequest, CalendarEvent } from '../api/types'
 import { createDb, sessionSummary, type Db } from './seed'
 import { buildRunFrames } from './sse-script'
 import { geo } from './geo'

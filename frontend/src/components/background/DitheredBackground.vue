@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, useTemplateRef } from 'vue'
+import { ref, useTemplateRef } from 'vue'
 import { useCursorLens, LENS_GRADIENT } from '../../composables/useCursorLens'
 
 const SCENES = ['france', 'greece', 'italy', 'japan', 'china', 'india', 'russia', 'usa'] as const
