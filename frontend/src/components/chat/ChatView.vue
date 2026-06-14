@@ -1,1 +1,62 @@
-<template><div /></template>
+<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import ChatComposer from './ChatComposer.vue'
+import MessageList from './MessageList.vue'
+import { useChatStore } from '../../stores/chat'
+import { useSessionsStore } from '../../stores/sessions'
+
+const props = defineProps<{ sessionId?: string }>()
+const chat = useChatStore(); const sessions = useSessionsStore(); const router = useRouter()
+const draft = ref('')
+const started = computed(() => chat.messages.length > 0)
+
+onMounted(async () => {
+  if (props.sessionId) { await sessions.loadDetail(props.sessionId); if (sessions.current) chat.hydrate(sessions.current.id, sessions.current.messages) }
+  else chat.reset()
+})
+watch(() => props.sessionId, async (id) => {
+  if (id) { await sessions.loadDetail(id); if (sessions.current) chat.hydrate(sessions.current.id, sessions.current.messages) }
+  else chat.reset()
+})
+
+async function onSubmit(text: string) {
+  await chat.send(text)
+  if (chat.sessionId && !props.sessionId) router.replace(`/c/${chat.sessionId}`)
+}
+function onAnswer(optionIds: string[], freeform?: string) {
+  if (chat.pendingQuestion) chat.answer(chat.pendingQuestion.id, optionIds, freeform)
+}
+</script>
+
+<template>
+  <div class="chat" :class="{ chatting: started }">
+    <transition name="hero">
+      <div v-if="!started" class="hero">
+        <h1>Куда отправимся?</h1>
+        <p>Опишите поездку — соберу маршрут, отели и туры под вашу группу.</p>
+      </div>
+    </transition>
+
+    <div v-if="started" class="thread">
+      <MessageList :messages="chat.messages" :question="chat.pendingQuestion" :plan-status="chat.planStatus" :plan-id="chat.planId" @answer="onAnswer" />
+    </div>
+
+    <div class="composer-slot" :class="{ bottom: started }">
+      <ChatComposer v-model="draft" @submit="onSubmit" />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.chat { position: fixed; inset: 0; }
+.hero { position: absolute; left: 0; right: 0; top: 31%; text-align: center; }
+.hero h1 { font-size: 38px; font-weight: 600; letter-spacing: -.8px; margin: 0; color: #fff; text-shadow: 0 2px 30px rgba(0,0,0,.6); }
+.hero p { color: #e7ddcf; margin: 10px 0 0; text-shadow: 0 1px 14px rgba(0,0,0,.6); }
+.thread { position: absolute; left: 50%; transform: translateX(-50%); top: 78px; bottom: 110px; width: min(720px, 92%); }
+.composer-slot { position: absolute; left: 50%; transform: translateX(-50%); top: 48%; display: flex; justify-content: center; width: 100%;
+  transition: top .6s cubic-bezier(.55,.06,.12,1); }
+.composer-slot.bottom { top: calc(100% - 96px); }
+.hero-enter-active, .hero-leave-active { transition: opacity .35s, transform .35s; }
+.hero-enter-from, .hero-leave-to { opacity: 0; transform: translateY(-14px); }
+</style>
