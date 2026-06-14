@@ -48,7 +48,7 @@ Single token defined in `src/styles/glass.css`, imported by `src/style.css`:
 
 ## 4. App entry and routing
 
-- **`src/main.ts`** — bootstraps MSW (in `DEV` or `VITE_USE_MOCKS=true`) before mounting the Vue app with Pinia and Vue Router.
+- **`src/main.ts`** — bootstraps MSW (in `DEV` or `VITE_USE_MOCKS=true`) before mounting the Vue app with Pinia and Vue Router. An explicit `VITE_USE_MOCKS=false` opts out of mocks even in dev, so the dev server talks to the real backend at `VITE_API_BASE` (e.g. `http://localhost:8000/api/v1`); see `.env.example`. Production builds never start MSW.
 - **`src/App.vue`** — thin shell: renders `<AppShell><RouterView /></AppShell>`.
 - **`src/router/index.ts`** — four routes:
 
