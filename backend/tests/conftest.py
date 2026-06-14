@@ -1,11 +1,13 @@
 import os
+import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import ASGITransport, AsyncClient
 
-TEST_DB = Path(__file__).resolve().parents[1] / "test.db"
+TEST_DB = Path(tempfile.gettempdir()) / (f"travel-backend-tests-{os.getpid()}-{uuid4().hex}.db")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB.as_posix()}"
 os.environ["JWT_SECRET"] = "test-jwt-secret-with-sufficient-length"
 os.environ["ACCESS_TOKEN_TTL_MINUTES"] = "15"
@@ -18,21 +20,29 @@ os.environ["SUPPORTED_LOCALES"] = "ru-RU,en-US"
 os.environ["CORS_ORIGINS"] = "http://testserver"
 os.environ["LOG_LEVEL"] = "INFO"
 
-from travel_backend.database import Base, engine  # noqa: E402
+from travel_backend.database import Base, SessionFactory, engine  # noqa: E402
 from travel_backend.main import app  # noqa: E402
+from travel_backend.seed import seed_data  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
 async def database():
-    if TEST_DB.exists():
-        TEST_DB.unlink()
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
     async with LifespanManager(app):
         yield
     await engine.dispose()
-    if TEST_DB.exists():
-        TEST_DB.unlink()
+    TEST_DB.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
+async def reset_database(database):
+    async with engine.begin() as connection:
+        for table in reversed(Base.metadata.sorted_tables):
+            await connection.execute(table.delete())
+    async with SessionFactory() as db:
+        await seed_data(db)
+    yield
 
 
 @pytest.fixture
@@ -46,9 +56,7 @@ async def client(database):
 
 @pytest.fixture
 def unique_email():
-    counter = getattr(unique_email, "counter", 0) + 1
-    unique_email.counter = counter
-    return f"user{counter}@example.com"
+    return f"user-{uuid4().hex}@example.com"
 
 
 async def register_user(client: AsyncClient, email: str) -> tuple[dict, dict[str, str]]:

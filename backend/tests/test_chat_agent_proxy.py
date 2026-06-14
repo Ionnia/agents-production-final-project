@@ -1,13 +1,14 @@
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
+import pytest
 from conftest import create_group, register_user
 from sqlalchemy import func, select
 
 from travel_backend.clients.agent_service import CreatedRun
-from travel_backend.database import SessionFactory
+from travel_backend.database import SessionFactory, engine
 from travel_backend.errors import APIError
-from travel_backend.models import ChatSession, Plan, Run, RunEvent, User
+from travel_backend.models import ChatSession, Message, Plan, Run, RunEvent, User
 from travel_backend.schemas import AgentEvent
 
 
@@ -17,11 +18,21 @@ class SuccessfulAgentClient:
 
     def __init__(self, settings):
         self.settings = settings
+        self.agent_run_id: str | None = None
+        self.thread_id: str | None = None
+        self.agent_message_id: str | None = None
 
     async def create_run(self, payload: dict, correlation_id: str) -> CreatedRun:
         type(self).create_payload = payload
         type(self).correlation_id = correlation_id
-        return CreatedRun("agent-run-1", "agent-thread-1", "/v1/runs/agent-run-1/stream")
+        self.agent_run_id = f"agent-{payload['external_run_id']}"
+        self.thread_id = f"thread-{payload['session_id']}"
+        self.agent_message_id = f"message-{payload['external_run_id']}"
+        return CreatedRun(
+            self.agent_run_id,
+            self.thread_id,
+            f"/v1/runs/{self.agent_run_id}/stream",
+        )
 
     async def stream(
         self,
@@ -29,12 +40,14 @@ class SuccessfulAgentClient:
         correlation_id: str,
         last_event_id: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        assert self.agent_run_id
+        assert self.agent_message_id
         yield AgentEvent(
             event="message",
             data={
-                "agent_run_id": "agent-run-1",
+                "agent_run_id": self.agent_run_id,
                 "message": {
-                    "id": "assistant-1",
+                    "id": self.agent_message_id,
                     "role": "assistant",
                     "content": "Начинаю планирование.",
                 },
@@ -43,7 +56,7 @@ class SuccessfulAgentClient:
         yield AgentEvent(
             event="plan",
             data={
-                "agent_run_id": "agent-run-1",
+                "agent_run_id": self.agent_run_id,
                 "plan": {
                     "destination": "IST",
                     "start_date": "2026-07-10",
@@ -72,7 +85,7 @@ class SuccessfulAgentClient:
         yield AgentEvent(
             event="run_status",
             data={
-                "agent_run_id": "agent-run-1",
+                "agent_run_id": self.agent_run_id,
                 "status": "completed",
                 "outcome": "recommendation",
             },
@@ -89,10 +102,11 @@ class InvalidPlanAgentClient(SuccessfulAgentClient):
         correlation_id: str,
         last_event_id: str | None = None,
     ) -> AsyncIterator[AgentEvent]:
+        assert self.agent_run_id
         yield AgentEvent(
             event="plan",
             data={
-                "agent_run_id": "agent-run-1",
+                "agent_run_id": self.agent_run_id,
                 "plan": {
                     "destination": "IST",
                     "selections": {"flight_id": "unknown"},
@@ -118,6 +132,31 @@ class CancelAgentClient:
 
     async def close(self) -> None:
         return None
+
+
+class FailingCancelAgentClient(CancelAgentClient):
+    error_code = "timeout"
+    status_code = 504
+
+    async def cancel(self, agent_run_id: str, correlation_id: str) -> None:
+        raise APIError(self.status_code, self.error_code, details={"upstream": "private"})
+
+
+class SessionBoundaryAgentClient(SuccessfulAgentClient):
+    async def create_run(self, payload: dict, correlation_id: str) -> CreatedRun:
+        assert engine.pool.checkedout() == 0
+        return await super().create_run(payload, correlation_id)
+
+    async def stream(
+        self,
+        stream_url: str,
+        correlation_id: str,
+        last_event_id: str | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        assert engine.pool.checkedout() == 0
+        async for event in super().stream(stream_url, correlation_id, last_event_id):
+            assert engine.pool.checkedout() == 0
+            yield event
 
 
 async def create_ready_plan(email: str) -> str:
@@ -168,8 +207,8 @@ async def test_chat_calls_agent_and_persists_complete_mapping_and_plan(
 
     async with SessionFactory() as db:
         run = await db.get(Run, run_id)
-        assert run.agent_run_id == "agent-run-1"
-        assert run.agent_thread_id == "agent-thread-1"
+        assert run.agent_run_id == f"agent-{run_id}"
+        assert run.agent_thread_id == f"thread-{run.session_id}"
         assert run.agent_stream_url.endswith("/stream")
         assert run.group_id == group["id"]
         assert run.status == "completed"
@@ -177,6 +216,14 @@ async def test_chat_calls_agent_and_persists_complete_mapping_and_plan(
         plan = await db.scalar(select(Plan).where(Plan.run_id == run.id))
         assert plan.status == "ready"
         assert plan.estimated_total_rub == 130500
+        persisted_message = await db.scalar(
+            select(Message).where(
+                Message.run_id == run.id,
+                Message.agent_message_id == f"message-{run.id}",
+            )
+        )
+        assert persisted_message is not None
+        assert persisted_message.id != persisted_message.agent_message_id
         events = (
             await db.scalars(
                 select(RunEvent).where(RunEvent.run_id == run.id).order_by(RunEvent.sequence)
@@ -208,6 +255,15 @@ async def test_chat_calls_agent_and_persists_complete_mapping_and_plan(
     assert "event: message" in stream.text
     assert "event: plan_status" in stream.text
     assert "event: map" in stream.text
+    session = await client.get(
+        f"/api/v1/sessions/{response.json()['session_id']}",
+        headers=headers,
+    )
+    assistant_messages = [
+        item for item in session.json()["messages"] if item["role"] == "assistant"
+    ]
+    assert assistant_messages
+    assert all("agent_message_id" not in item for item in assistant_messages)
 
 
 async def test_invalid_agent_plan_is_not_persisted(client, unique_email, monkeypatch):
@@ -226,6 +282,7 @@ async def test_invalid_agent_plan_is_not_persisted(client, unique_email, monkeyp
     async with SessionFactory() as db:
         run = await db.get(Run, run_id)
         assert run.status == "error"
+        assert run.error_code == "validation_error"
         count = await db.scalar(select(func.count()).select_from(Plan).where(Plan.run_id == run_id))
         assert count == 0
 
@@ -333,3 +390,72 @@ async def test_cancel_calls_agent_service_when_mapping_exists(
         "agent-to-cancel",
         "cancel-correlation",
     )
+
+
+@pytest.mark.parametrize(
+    ("error_code", "status_code"),
+    [("timeout", 504), ("agent_unavailable", 502)],
+)
+async def test_cancel_normalizes_agent_failures_to_frontend_http_contract(
+    client,
+    unique_email,
+    monkeypatch,
+    error_code,
+    status_code,
+):
+    class ControlledFailure(FailingCancelAgentClient):
+        pass
+
+    ControlledFailure.error_code = error_code
+    ControlledFailure.status_code = status_code
+    monkeypatch.setattr(
+        "travel_backend.api.chat.AgentServiceClient",
+        ControlledFailure,
+    )
+    _, headers = await register_user(client, unique_email)
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        session = ChatSession(user_id=user.id, summary="Cancel failure")
+        db.add(session)
+        await db.flush()
+        run = Run(
+            session_id=session.id,
+            user_id=user.id,
+            correlation_id=str(uuid4()),
+            mode="qa",
+            status="running",
+            agent_run_id=f"agent-{uuid4()}",
+            input_payload={"message": "test"},
+        )
+        db.add(run)
+        await db.commit()
+        run_id = run.id
+    response = await client.post(f"/api/v1/chat/{run_id}/cancel", headers=headers)
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {
+            "code": "internal",
+            "message": "Произошла внутренняя ошибка сервиса.",
+        }
+    }
+
+
+async def test_agent_network_waits_do_not_hold_database_connections(
+    client,
+    unique_email,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "travel_backend.services.runs.AgentServiceClient",
+        SessionBoundaryAgentClient,
+    )
+    _, headers = await register_user(client, unique_email)
+    response = await client.post(
+        "/api/v1/chat",
+        headers=headers,
+        json={"message": "Проверь границы сессии"},
+    )
+    assert response.status_code == 202
+    async with SessionFactory() as db:
+        run = await db.get(Run, response.json()["run_id"])
+        assert run.status == "completed"
