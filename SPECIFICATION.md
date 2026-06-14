@@ -58,7 +58,7 @@ added/removed points, which starts a new rebuild run. Lifecycles:
 |---|---|---|---|
 | **Frontend↔Backend contract** | [`api/`](./api/) | [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) → [`api/openapi.yaml`](./api/openapi.yaml) | Defined; not implemented |
 | **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Defined; not implemented |
-| **Frontend** | [`frontend/`](./frontend/) | Root spec §2.3 (API layer done; views pending) | Shell + backgrounds + API client (client/sse/endpoints) built; chat/plan views pending |
+| **Frontend** | [`frontend/`](./frontend/) | [`frontend/SPECIFICATION.md`](./frontend/SPECIFICATION.md) | Implemented: chat UI, dithered backgrounds, side panel, plan map/calendar, auth — all mock-backed (MSW) |
 | **Domain data** | [`data/`](./data/) | [`README.md`](./README.md) (dataset description) | Present (synthetic seed data) |
 | **Backend service (BFF)** | _not in repo yet_ | — | Planned; implements the `api/` + `/internal` contracts, owns the business DB |
 | **Agent Service** | _not in repo yet_ | — | Planned; implements Contract A; LangGraph + RAG/LLM |
@@ -82,18 +82,13 @@ the backend persists. See [`agent-service/SPECIFICATION.md`](./agent-service/SPE
 
 ### 2.3 Frontend (`frontend/`)
 
-Vue 3 + TypeScript + Vite + Tailwind v4 + Pinia + Vue Router. Glassmorphism UI with dithered
-prerendered backgrounds (8 scenes, cursor color-lens). API layer is built and typed:
-
-- `src/api/schema.d.ts` — generated from `api/openapi.yaml` via `openapi-typescript`
-- `src/api/types.ts` — friendly type aliases + discriminated `SseEvent` union
-- `src/api/client.ts` — `createClient` fetch wrapper (bearer auth, error-envelope → `ApiClientError`, JSON/204)
-- `src/api/sse.ts` — `parseEventStream` (ReadableStream → typed frames) + `streamRun`
-- `src/api/endpoints.ts` — one typed function per OpenAPI operation; `setTokenGetter` + shared `client`
-
-The app shell, router (auth/chat/plan routes), Pinia bootstrap, glass design tokens, cursor-lens
-composable, and UI primitives (GlassPanel, Skeleton, EmptyState, toasts) are in place. Chat, plan,
-auth views and Pinia stores are pending (Phase 4–8 of the implementation plan).
+Vue 3 + TypeScript + Vite + Tailwind v4 + Pinia + Vue Router 4 + MapLibre GL. The full application
+is implemented and mock-backed via MSW 2: glassmorphism UI with dithered prerendered backgrounds (8
+scenes, cursor color-lens), auth flow, chat with streamed SSE responses and clarifying questions, a
+side panel with session/group/plan history, and a plan view with an interactive MapLibre map,
+day-by-day itinerary calendar, offer cards, and inline plan editing. The API layer is typed end-to-end
+from `api/openapi.yaml` via `openapi-typescript`. 17 unit/integration specs pass with Vitest. See
+[`frontend/SPECIFICATION.md`](./frontend/SPECIFICATION.md) for the full module description.
 
 ### 2.4 Domain data (`data/`)
 
