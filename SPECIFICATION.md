@@ -60,8 +60,9 @@ added/removed points, which starts a new rebuild run. Lifecycles:
 | **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Defined; not implemented |
 | **Frontend** | [`frontend/`](./frontend/) | [`frontend/src/SPEC.md`](./frontend/src/SPEC.md) (UI/visual scenes) | UI shell + animated backgrounds; API client not built |
 | **Domain data** | [`data/`](./data/) | [`README.md`](./README.md) (dataset description) | Present (synthetic seed data) |
-| **Backend service (BFF)** | _not in repo yet_ | — | Planned; implements the `api/` + `/internal` contracts, owns the business DB |
-| **Agent Service** | _not in repo yet_ | — | Planned; implements Contract A; LangGraph + RAG/LLM |
+| **Agent experiments/runtime** | [`agent/`](./agent/) | [`agent/SPECIFICATION.md`](./agent/SPECIFICATION.md) | Research baselines B1/B2/B3 + selected Final graph used by Agent Service |
+| **Backend service (BFF)** | `backend/` (on the `backend` branch) | — | Implemented by teammate; FastAPI, implements `api/` + Contract B `/internal`, owns the business DB |
+| **Agent Service** | [`agent-service/`](./agent-service/) (code + [`README.md`](./agent-service/README.md)) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) | **Implemented** — FastAPI Contract A (runs+SSE), uses Final agent graph, validates draft plans via Contract B |
 
 ### 2.1 Frontend↔Backend contract (`api/`)
 
@@ -97,7 +98,16 @@ Synthetic seed data the agent reasons over, described in [`README.md`](./README.
 - `reference/` — reference plans / graded recommendations (`*_recommendations.csv`).
 - `qa/` — Q&A dataset for E2E evaluation.
 - `documents/` — service policy documents for RAG (booking rules, fares & baggage, hotel policy,
-  package tours).
+  package tours, and the agent behavior regime — outcome types, escalation/clarification/rejection,
+  replanning).
+
+### 2.5 Agent experiments (`agent/`)
+
+Local agent research/runtime code: a progression of agent architectures (B1 single-agent LangChain
+Tool+RAG; B2 LangGraph `draft → validate → replan`; B3 structured MAS; and the selected Final graph),
+a Chroma policy-index builder, and a shared QA prediction evaluator. The HTTP/SSE boundary lives in
+[`agent-service/`](./agent-service/); the service imports the selected Final graph from this module
+and validates recommendation drafts through backend Contract B before streaming them.
 
 ## 3. Cross-cutting conventions
 

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Travel-агент — архитектуры решений</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --ink:#e7ebf0; --muted:#9aa4b2; --line:#2a2f3a; --accent:#6c8ebf; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+         line-height:1.55; }
+  header { padding:36px 24px 8px; max-width:1100px; margin:0 auto; }
+  h1 { font-size:28px; margin:0 0 6px; }
+  .sub { color:var(--muted); margin:0 0 4px; }
+  main { max-width:1100px; margin:0 auto; padding:8px 24px 64px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:14px;
+            padding:20px 22px; margin:22px 0; }
+  h2 { font-size:20px; margin:0 0 2px; }
+  .status { font-size:12px; font-weight:600; padding:2px 10px; border-radius:999px; margin-left:8px;
+            vertical-align:middle; }
+  .done { background:#1c3b2a; color:#7ee2a8; border:1px solid #2f6b4a; }
+  .plan { background:#3a331c; color:#e6c86a; border:1px solid #6b5c2f; }
+  .why { color:var(--muted); margin:10px 0 0; font-size:14px; }
+  .why b { color:var(--ink); }
+  .mermaid { background:#0c0e12; border:1px solid var(--line); border-radius:10px;
+             padding:14px; margin:14px 0 4px; text-align:center; }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; margin:6px 0 0; font-size:13px; color:var(--muted); }
+  .legend span { display:inline-flex; align-items:center; gap:7px; }
+  .sw { width:14px; height:14px; border-radius:4px; border:1px solid #0006; display:inline-block; }
+  table { width:100%; border-collapse:collapse; margin:10px 0 0; font-size:14px; }
+  th, td { border:1px solid var(--line); padding:7px 10px; text-align:center; }
+  th { background:#1d212a; }
+  td:first-child, th:first-child { text-align:left; }
+  .hi { color:#7ee2a8; font-weight:700; }
+  code { background:#0c0e12; border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:13px; }
+  a { color:#8fb4ec; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Travel-агент — архитектуры решений</h1>
+  <p class="sub">Сравнение бейзлайнов агента. Все варианты используют один eval-харнесс
+     (<code>data/qa/qa.jsonl</code> → <code>baselines/evaluate_predictions.py</code>), метрики сопоставимы.</p>
+  <div class="legend">
+    <span><i class="sw" style="background:#dae8fc"></i>LLM-узел (GigaChat)</span>
+    <span><i class="sw" style="background:#ffe6cc"></i>детерминированный код [det]</span>
+    <span><i class="sw" style="background:#d5e8d4"></i>данные / RAG / память</span>
+    <span><i class="sw" style="background:#fff2cc"></i>решение / HITL</span>
+    <span><i class="sw" style="background:#e1d5e7"></i>LLM-критик (рефлексия)</span>
+    <span><i class="sw" style="background:#f8cecc"></i>внешний сервис (backend)</span>
+  </div>
+</header>
+
+<main>
+
+  <section>
+    <h2>B1 — Single-agent Tool + RAG <span class="status done">реализован</span></h2>
+    <div class="mermaid">
+flowchart TD
+  QA([QA-кейс: user_request + group_id]) --> AG["GigaChat ReAct-агент (LLM)<br/>create_agent · system_prompt = роль"]
+  AG <-->|вызовы / результаты| TOOLS["tools: get_group_context · search_flights<br/>search_hotels · search_tours"]
+  AG <-->|вызовы / результаты| RAG[("policy RAG · Chroma")]
+  AG --> OUT([один JSON outcome])
+  classDef llm fill:#dae8fc,stroke:#6c8ebf,color:#111;
+  classDef data fill:#d5e8d4,stroke:#82b366,color:#111;
+  classDef term fill:#f5f5f5,stroke:#666,color:#111;
+  class AG llm; class TOOLS,RAG data; class QA,OUT term;
+    </div>
+    <p class="why"><b>Смысл:</b> проверить, что LLM с tools+RAG вообще решает задачу и держит формат.
+       Никакой самопроверки — арифметика и entity-поля «на совести» модели.
+       <br><b>Рубрика:</b> Reasoning 1 · Action 2 · Domain 1 · Role 1 · Reflection/Memory 0.
+       <br><b>Файл:</b> <code>baselines/llm_tool_rag_baseline.py</code></p>
+  </section>
+
+  <section>
+    <h2>B2 — LangGraph: draft → normalize → validate → replan <span class="status done">реализован</span></h2>
+    <div class="mermaid">
+flowchart TD
+  QA([QA-кейс]) --> D["draft (LLM)<br/>ReAct-агент B1 + те же tools + RAG<br/>→ черновик JSON"]
+  D <-->|вызовы / результаты| T["tools + policy RAG"]
+  D --> N["normalize [det]<br/>• id из текста ответа<br/>• hotel_id ← из пакетного тура<br/>• flight_id ← best_flight, если тур с перелётом"]
+  N --> V["validate [det] = стаб Contract B<br/>POST /internal/plans/validate<br/>бюджет · ограничения · согласованность<br/>→ violations[]"]
+  V --> R{"violations<br/>и drafts &lt; 3 ?"}
+  R -->|нет нарушений / лимит| E([итоговый JSON outcome])
+  R -.->|replan: список нарушений как фидбэк| D
+  classDef llm fill:#dae8fc,stroke:#6c8ebf,color:#111;
+  classDef det fill:#ffe6cc,stroke:#d79b00,color:#111;
+  classDef data fill:#d5e8d4,stroke:#82b366,color:#111;
+  classDef dec fill:#fff2cc,stroke:#d6b656,color:#111;
+  classDef term fill:#f5f5f5,stroke:#666,color:#111;
+  class D llm; class N,V det; class T data; class R dec; class QA,E term;
+    </div>
+    <p class="why"><b>Смысл:</b> разделение труда — <b>LLM рассуждает и выбирает, код считает и сверяет</b>,
+       а петля даёт агенту переиграть решение по результатам валидации (reasoning-by-replanning).
+       Бюджетную арифметику принципиально не отдаём LLM. <code>validate</code> — это tool, <b>не</b> рефлексия.
+       <br><b>Рубрика над B1:</b> Reasoning 1→2. <b>Связь с продом:</b> <code>validate</code> повторяет роль
+       backend-контракта Contract B; узлы графа — прообраз LangGraph-рантайма из <code>agent-service/</code>.
+       <br><b>Риск:</b> если <code>normalize</code>/<code>best_flight</code> начнут сами выбирать офферы вместо
+       LLM — это сполз к детерминированному if-then (менее агентно).
+       <br><b>Файл:</b> <code>baselines/langgraph_plan_validate_baseline.py</code></p>
+  </section>
+
+  <section>
+    <h2>B3 — Multi-agent (MAS): supervisor + специалисты + LLM-критик <span class="status done">реализован</span></h2>
+    <div class="mermaid">
+flowchart TD
+  QA([QA-кейс]) --> CTX["load_context [det]<br/>префильтр офферов по направлению"]
+  CTX --> INT["IntentAgent (LLM)<br/>тип запроса · effective_budget · риск"]
+  INT --> FL["FlightAgent"]
+  INT --> HT["HotelAgent"]
+  INT --> TR["TourAgent"]
+  INT --> PL["PolicyAgent · RAG<br/>escalation только при реальном риске участника"]
+  FL --> SUP
+  HT --> SUP
+  TR --> SUP
+  PL --> SUP["Supervisor/Planner (LLM)<br/>собирает план · enforce budget/escalation"]
+  SUP --> FZ["FinalJsonAgent (LLM)<br/>строгая схема + enum"]
+  FZ --> CR["CriticAgent (LLM) + validate [det]<br/>рефлексия, заземлённая фактами"]
+  CR -.->|replan| SUP
+  CR -->|ok| E([итоговый JSON outcome])
+  classDef llm fill:#dae8fc,stroke:#6c8ebf,color:#111;
+  classDef det fill:#ffe6cc,stroke:#d79b00,color:#111;
+  classDef crit fill:#e1d5e7,stroke:#9673a6,color:#111;
+  classDef term fill:#f5f5f5,stroke:#666,color:#111;
+  class INT,FL,HT,TR,PL,SUP,FZ llm; class CTX det; class CR crit; class QA,E term;
+    </div>
+    <p class="why"><b>Смысл:</b> чистый агентный конвейер — <code>load_context</code> префильтрует офферы,
+       специалисты дают структурный анализ, supervisor собирает план, FinalJsonAgent гарантирует
+       строгий enum, CriticAgent рефлексирует (заземляясь на <code>validate</code> как инструмент).
+       <b>Решения об исходе — агентные, без детерминированных гейтов.</b>
+       <br><b>Рубрика над B2:</b> Action 2→3, Role 1→2, Reflection 0→1/2 + MAS-фрейминг (критерий 2/3).
+       <b>Связь с продом:</b> MAS живёт <i>внутри одного</i> LangGraph-графа — не противоречит
+       <code>agent-service/openapi.yaml</code>.
+       <br><b>Проблемы и лечение (критерий 5):</b> (1) наивный MAS терял контекст между агентами →
+       брифуем специалистов контекстом группы; (2) <b>переэскалация</b> — <code>policy_node</code>
+       подмешивал «визовые ограничения» в каждый RAG-запрос → эскалация привязана к <i>конкретному</i>
+       риску участника; (3) <b>бюджет из запроса</b> («уложись в 160000») извлекает IntentAgent.
+       <br><b>Вывод:</b> улучшения подняли качество, но B3 даёт <b>выше entity, ниже outcome</b>, чем
+       B2 — решения принимаются дальше от данных. Для этой задачи дисциплина B2 ≥ чистого MAS.
+       <br><b>Файл:</b> <code>baselines/mas_supervisor_baseline.py</code></p>
+  </section>
+
+  <section>
+    <h2>Final — агентный синтез: entity от специалистов + outcome на фактах выполнимости <span class="status done">реализован</span></h2>
+    <div class="mermaid">
+flowchart TD
+  QA([QA-кейс]) --> CTX["load_context · префильтр офферов"]
+  CTX --> INT["IntentAgent (LLM)<br/>тип запроса · effective_budget"]
+  INT --> FL["FlightAgent"]
+  INT --> HT["HotelAgent"]
+  INT --> TR["TourAgent"]
+  INT --> PL["PolicyAgent · RAG"]
+  FL --> FEZ
+  HT --> FEZ
+  TR --> FEZ
+  PL --> FEZ["feasibility · КАЛЬКУЛЯТОР [факт, не решение]<br/>стоимость (без двойного счёта тура) · бюджет из запроса · в бюджете? · нарушения"]
+  FEZ --> SUP["Supervisor (LLM)<br/>outcome по фактам · дефолт clarification"]
+  SUP --> FZ["FinalJsonAgent (LLM)<br/>строгая схема"]
+  FZ --> CR["CriticAgent (LLM)<br/>сверка исхода с фактами (ловит переотказ)"]
+  CR -.->|replan| SUP
+  CR -->|ok| E([итоговый JSON outcome])
+  classDef llm fill:#dae8fc,stroke:#6c8ebf,color:#111;
+  classDef det fill:#ffe6cc,stroke:#d79b00,color:#111;
+  classDef data fill:#d5e8d4,stroke:#82b366,color:#111;
+  classDef crit fill:#e1d5e7,stroke:#9673a6,color:#111;
+  classDef term fill:#f5f5f5,stroke:#666,color:#111;
+  class INT,FL,HT,TR,PL,SUP,FZ llm; class FEZ det; class CTX data; class CR crit; class QA,E term;
+    </div>
+    <p class="why"><b>Смысл:</b> B1–B3 показали — <b>entity рождается у специалистов, outcome у заземления
+       на надёжные факты</b>. Final берёт обе сильные стороны: специалисты дают id (entity ≈ 1.0), а
+       <b>детерминированный калькулятор feasibility (инструмент, не решение)</b> считает стоимость и бюджет
+       точно; <b>решают агенты</b> (supervisor/critic) по этим фактам и порядку, <b>по умолчанию
+       clarification</b> при «не влезает», rejection — только при явном запрете компромисса. Это паттерн B2
+       (факты — tool, решение — агент) + специалисты B3.
+       <br><b>Почему так, а не LLM-оценщик:</b> ранний полностью-агентный FeasibilityAgent переотказывал —
+       LLM-вердикт о бюджете шумный. Калькулятор-инструмент вернул надёжный грунт; арифметику не отдаём LLM.
+       <br><b>Связь с продом:</b> это reasoning-ядро будущего <code>agent-service/</code> (Contract A);
+       обёртка stateful-threads + долгая память + HITL + реальный Contract B — следующий слой деплоя.</p>
+  </section>
+
+  <section>
+    <h2>Сводка по рубрике зрелости</h2>
+    <table>
+      <tr><th>Ось (вес)</th><th>B1</th><th>B2</th><th>B3</th><th>Final</th></tr>
+      <tr><td>Reasoning (×3)</td><td>1</td><td class="hi">2</td><td>2</td><td>2</td></tr>
+      <tr><td>Reflection (×2)</td><td>0</td><td>0</td><td class="hi">1–2</td><td class="hi">2</td></tr>
+      <tr><td>Memory (×2)</td><td>0</td><td>0</td><td>0</td><td class="hi">2</td></tr>
+      <tr><td>Autonomy (×3)</td><td>2–3</td><td>2–3</td><td>3</td><td>2 (HITL)</td></tr>
+      <tr><td>Action (×2)</td><td>2</td><td>2</td><td class="hi">3</td><td>3</td></tr>
+      <tr><td>Domain (×1)</td><td>1</td><td>1</td><td>1</td><td class="hi">2</td></tr>
+      <tr><td>Role (×1)</td><td>1</td><td>1</td><td class="hi">2</td><td>2</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Метрики на <code>data/qa/qa.jsonl</code> (20 кейсов)</h2>
+    <table>
+      <tr><th>Вариант</th><th>parse</th><th>outcome</th><th>entity</th></tr>
+      <tr><td>B1</td><td>1.00</td><td>0.85</td><td>0.667</td></tr>
+      <tr><td>B2</td><td>1.00</td><td class="hi">0.95</td><td>0.867</td></tr>
+      <tr><td>B3</td><td>1.00</td><td>~0.75 (0.65–0.85)</td><td class="hi">1.0</td></tr>
+      <tr><td><b>Final</b></td><td>1.00</td><td class="hi">0.85</td><td class="hi">1.0</td></tr>
+    </table>
+    <p class="why"><b>Итог:</b> B2 — лучший outcome, слабый entity; B3 — entity 1.0, шумный outcome;
+       <b>Final — лучший баланс (0.85 + 1.0)</b>. Остаточные промахи Final (3): <code>Q-005</code>/<code>Q-018</code>
+       — группа G-0005, где сама разметка на грани (rejection vs clarification); <code>Q-003</code> — выбор
+       «тур vs раздельно». Граница/разметка, не логика — материал для критерия 5, не для подгонки.</p>
+  </section>
+
+</main>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: "dark", securityLevel: "loose",
+                       flowchart: { curve: "basis", useMaxWidth: true } });
+</script>
+</body>
+</html>

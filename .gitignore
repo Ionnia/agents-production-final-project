@@ -39,10 +39,12 @@ venv/
 env/
 ENV/
 .python-version
+!.python-version
 
 # Environments / secrets
 .env
 .env.*
+!agent-service/.env.example
 *.local
 
 # Jupyter
@@ -77,3 +79,11 @@ htmlcov/
 .agents
 .claude
 skills-lock.json
+baseline_predictions.jsonl
+b2_predictions.jsonl
+b3_predictions.jsonl
+final_predictions.jsonl
+mas_predictions.jsonl
+mas_predictions2.jsonl
+langgraph_predictions.jsonl
+data/indexes/

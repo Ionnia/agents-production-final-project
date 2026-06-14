@@ -1,0 +1,7 @@
+python-dotenv
+langchain
+langgraph
+langchain-gigachat-lc1
+pandas
+chromadb
+langchain-chroma
