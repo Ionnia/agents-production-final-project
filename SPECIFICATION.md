@@ -153,7 +153,18 @@ and validates recommendation drafts through backend Contract B before streaming 
   [`docs/AGENT_ROUTE_CONTENT_EXPECTATIONS.md`](./docs/AGENT_ROUTE_CONTENT_EXPECTATIONS.md) defines
   the untrusted structured place content the Agent Service produces.
 
-## 4. Design history
+## 4. Running locally
+
+- **Docker (recommended):** `cp .env.example .env` (fill in `GIGACHAT_CREDENTIALS` + the three
+  secrets), then `docker compose up --build` and open `http://localhost:5173`. The root
+  [`docker-compose.yml`](./docker-compose.yml) runs three containers — `frontend` (nginx serving the
+  built SPA and reverse-proxying `/api` → backend, so it is same-origin/no-CORS), `backend` (:8000),
+  and `agent-service` (internal). The backend migrates+seeds on startup; the agent builds the RAG
+  index on first run. See [`docs/DOCKER.md`](./docs/DOCKER.md).
+- **Without Docker:** run each service directly (uv + pnpm) per
+  [`docs/LOCAL_E2E.md`](./docs/LOCAL_E2E.md).
+
+## 5. Design history
 
 - [`docs/superpowers/specs/2026-06-13-travel-agent-api-design.md`](./docs/superpowers/specs/2026-06-13-travel-agent-api-design.md)
   — approved design rationale behind the frontend↔backend API contract.

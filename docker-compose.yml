@@ -1,0 +1,79 @@
+# Travel-planning agent — full stack.
+#   cp .env.example .env   # then fill in GIGACHAT_CREDENTIALS + the three secrets
+#   docker compose up --build
+# Open http://localhost:5173 (frontend nginx proxies /api -> backend).
+name: travel-agent
+
+services:
+  backend:
+    build:
+      context: ./backend
+    image: travel-backend
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////app/var/backend.db
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      ACCESS_TOKEN_TTL_MINUTES: "15"
+      REFRESH_TOKEN_TTL_DAYS: "30"
+      BACKEND_TOOL_TOKEN: ${BACKEND_TOOL_TOKEN:?set BACKEND_TOOL_TOKEN in .env}
+      AGENT_SERVICE_URL: http://agent-service:8001
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:?set AGENT_SERVICE_TOKEN in .env}
+      DEFAULT_LOCALE: ru-RU
+      SUPPORTED_LOCALES: ru-RU,en-US
+      CORS_ORIGINS: http://localhost:5173
+      LOG_LEVEL: info
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data:ro      # seed CSVs (read-only)
+      - backend-db:/app/var      # SQLite DB persists across restarts
+    ports:
+      - "8000:8000"              # exposed for direct API access / debugging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  agent-service:
+    build:
+      context: .
+      dockerfile: agent-service/Dockerfile
+    image: travel-agent-service
+    environment:
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:?set AGENT_SERVICE_TOKEN in .env}
+      BACKEND_BASE_URL: http://backend:8000
+      BACKEND_TOOL_TOKEN: ${BACKEND_TOOL_TOKEN:?set BACKEND_TOOL_TOKEN in .env}
+      GIGACHAT_CREDENTIALS: ${GIGACHAT_CREDENTIALS:?set GIGACHAT_CREDENTIALS in .env}
+      GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
+      GIGACHAT_MODEL: ${GIGACHAT_MODEL:-GigaChat-2-Max}
+      LOG_LEVEL: info
+    volumes:
+      - ./data:/app/data         # documents (read) + indexes/ (RAG index built here)
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/v1/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 150s         # first start may build the RAG index
+
+  frontend:
+    build:
+      context: ./frontend
+    image: travel-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    healthcheck:
+      # busybox wget; 127.0.0.1 forces IPv4 (nginx listens on IPv4, localhost->::1 is refused)
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  backend-db:

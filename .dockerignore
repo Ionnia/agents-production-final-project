@@ -1,0 +1,23 @@
+# Root build context is used by the agent-service image (needs agent-service/ + agent/).
+# Keep it lean: data/ is mounted at runtime, other services have their own contexts.
+.git/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/node_modules/
+.pnpm-store/
+frontend/
+backend/
+data/
+docs/
+*.db
+*.sqlite*
+**/.env
+.env
+.env.*
+!**/.env.example
+*.zip
+.claude/
+.agents/
+.superpowers/
+.DS_Store
