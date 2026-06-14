@@ -107,7 +107,8 @@ persistent frontend SSE event log, and validation of Agent Service draft plans. 
 [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md). Its supported ASGI entry point is
 `backend/app/main.py` (`uvicorn app.main:app` from the backend directory). The verified backend
 security boundary separates user JWTs, internal service tokens, and one-time stream tickets, and
-treats Agent Service responses and plan proposals as untrusted input.
+treats Agent Service responses and plan proposals as untrusted input. Alembic migrations are
+required before startup; runtime seed reconciliation repairs only backend-owned synthetic data.
 
 ## 3. Cross-cutting conventions
 

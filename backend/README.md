@@ -48,8 +48,10 @@ Optional settings include `AGENT_CONNECT_TIMEOUT_SECONDS`,
 uv run alembic upgrade head
 ```
 
-Startup idempotently imports the synthetic inventory and internal scenario groups from `../data`.
-Local database files are ignored by Git.
+Migrations are mandatory before application startup; runtime does not call `create_all`. After the
+schema exists, startup idempotently reconciles the synthetic inventory and internal scenario groups
+from `../data`. Missing rows and changed seed-owned fields are repaired without modifying
+user-created groups. Local database files are ignored by Git.
 
 ## Run
 
@@ -74,7 +76,8 @@ The suite covers all registered frontend and internal routes, JWT/service-token 
 password and token hashing, refresh rotation/replay, cross-user ownership, stream ticket
 expiry/scope/single-use behavior, SSE replay and payload vocabulary, Agent Service timeouts and
 malformed responses, deterministic seed import, offer search, plan validation, and Russian locale
-fallbacks.
+fallbacks. Each pytest process uses a unique temporary SQLite file, and every test starts from a
+fresh deterministic seed state.
 
 ## Security behavior
 
@@ -88,3 +91,5 @@ fallbacks.
 - Agent Service responses and semantic events are treated as untrusted. The backend validates
   event structure and run identity, rejects foreign stream URLs, recalculates plan cost, resolves
   offer IDs, and applies domain validation before persistence.
+- Backend message IDs are always generated locally. Agent-provided message IDs are stored only as
+  private correlation metadata and are never exposed through frontend session responses.

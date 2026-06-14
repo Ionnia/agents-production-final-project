@@ -5,7 +5,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..clients.agent_service import AgentServiceClient
+from ..clients.agent_service import AgentServiceClient, CreatedRun
 from ..config import get_settings
 from ..database import SessionFactory
 from ..errors import APIError
@@ -358,19 +358,15 @@ async def persist_draft(
 
 
 async def save_assistant_message(
-    db: AsyncSession, run: Run, content: str, source_id: str | None = None
+    db: AsyncSession, run: Run, content: str, agent_message_id: str | None = None
 ) -> None:
     entity = Message(
-        id=source_id or None,
+        agent_message_id=agent_message_id,
         session_id=run.session_id,
         run_id=run.id,
         role="assistant",
         content=content,
     )
-    if entity.id is None:
-        from ..models import new_id
-
-        entity.id = new_id()
     db.add(entity)
     await db.flush()
     await append_event(
@@ -508,67 +504,96 @@ async def fail_run(db: AsyncSession, run: Run, error: APIError) -> None:
     await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "error"})
 
 
+async def build_agent_payload(
+    run_id: str, default_locale: str
+) -> tuple[dict[str, Any], str] | None:
+    async with SessionFactory() as db:
+        run = await db.get(Run, run_id)
+        if run is None or run.status in TERMINAL_STATUSES:
+            return None
+        session = await db.get(ChatSession, run.session_id)
+        payload = {
+            "external_run_id": run.id,
+            "correlation_id": run.correlation_id,
+            "session_id": run.session_id,
+            "user_id": run.user_id,
+            "mode": run.mode,
+            "locale": run.input_payload.get("locale", default_locale),
+            **({"thread_id": session.thread_id} if session and session.thread_id else {}),
+            **({"group_id": session.group_id} if session and session.group_id else {}),
+            **({"active_plan_id": run.active_plan_id} if run.active_plan_id else {}),
+        }
+        if run.mode in {"new_trip", "qa"}:
+            payload["message"] = run.input_payload["message"]
+        elif run.mode == "answer":
+            payload["answer"] = run.input_payload["answer"]
+        elif run.mode == "modify":
+            payload["route_edits"] = run.input_payload["route_edits"]
+        return payload, run.correlation_id
+
+
+async def save_agent_mapping(run_id: str, created: CreatedRun) -> bool:
+    async with SessionFactory() as db:
+        run = await db.get(Run, run_id)
+        if run is None or run.status in TERMINAL_STATUSES:
+            return False
+        session = await db.get(ChatSession, run.session_id)
+        run.agent_run_id = created.agent_run_id
+        run.agent_thread_id = created.thread_id
+        run.agent_stream_url = created.stream_url
+        if session:
+            session.thread_id = created.thread_id
+        run.status = "running"
+        await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "running"})
+        await db.commit()
+        return True
+
+
+async def process_persisted_agent_event(run_id: str, event_name: str, data: dict[str, Any]) -> bool:
+    async with SessionFactory() as db:
+        run = await db.get(Run, run_id)
+        if run is None or run.status == "cancelled":
+            return False
+        await process_agent_event(db, run, event_name, data)
+        await db.commit()
+        return True
+
+
+async def fail_persisted_run(run_id: str, error: APIError) -> None:
+    async with SessionFactory() as db:
+        run = await db.get(Run, run_id)
+        if run is None or run.status == "cancelled":
+            return
+        await fail_run(db, run, error)
+        await db.commit()
+
+
+async def ensure_terminal_run(run_id: str) -> None:
+    async with SessionFactory() as db:
+        run = await db.get(Run, run_id)
+        if run and run.status not in TERMINAL_STATUSES:
+            await fail_run(db, run, APIError(502, "agent_unavailable"))
+            await db.commit()
+
+
 async def execute_run(run_id: str) -> None:
     settings = get_settings()
     client = AgentServiceClient(settings)
     try:
-        async with SessionFactory() as db:
-            run = await db.get(Run, run_id)
-            if run is None:
+        prepared = await build_agent_payload(run_id, settings.default_locale)
+        if prepared is None:
+            return
+        payload, correlation_id = prepared
+        created = await client.create_run(payload, correlation_id)
+        if not await save_agent_mapping(run_id, created):
+            return
+        async for event in client.stream(created.stream_url, correlation_id):
+            if not await process_persisted_agent_event(run_id, event.event, event.data):
                 return
-            session = await db.get(ChatSession, run.session_id)
-            payload = {
-                "external_run_id": run.id,
-                "correlation_id": run.correlation_id,
-                "session_id": run.session_id,
-                "user_id": run.user_id,
-                "mode": run.mode,
-                "locale": run.input_payload.get("locale", settings.default_locale),
-                **({"thread_id": session.thread_id} if session and session.thread_id else {}),
-                **({"group_id": session.group_id} if session and session.group_id else {}),
-                **({"active_plan_id": run.active_plan_id} if run.active_plan_id else {}),
-            }
-            if run.mode in {"new_trip", "qa"}:
-                payload["message"] = run.input_payload["message"]
-            elif run.mode == "answer":
-                payload["answer"] = run.input_payload["answer"]
-            elif run.mode == "modify":
-                payload["route_edits"] = run.input_payload["route_edits"]
-            try:
-                created = await client.create_run(payload, run.correlation_id)
-                run.agent_run_id = created.agent_run_id
-                run.agent_thread_id = created.thread_id
-                run.agent_stream_url = created.stream_url
-                if session:
-                    session.thread_id = created.thread_id
-                run.status = "running"
-                await append_event(
-                    db, run.id, "run_status", {"run_id": run.id, "status": "running"}
-                )
-                await db.commit()
-                async for event in client.stream(created.stream_url, run.correlation_id):
-                    run = await db.get(Run, run_id)
-                    if run is None:
-                        return
-                    if run.status == "cancelled":
-                        return
-                    await process_agent_event(db, run, event.event, event.data)
-                    await db.commit()
-                run = await db.get(Run, run_id)
-                if run and run.status not in TERMINAL_STATUSES:
-                    await fail_run(db, run, APIError(502, "agent_unavailable"))
-                    await db.commit()
-            except APIError as exc:
-                await db.rollback()
-                run = await db.get(Run, run_id)
-                if run:
-                    await fail_run(db, run, exc)
-                    await db.commit()
-            except Exception:
-                await db.rollback()
-                run = await db.get(Run, run_id)
-                if run:
-                    await fail_run(db, run, APIError(500, "internal"))
-                    await db.commit()
+        await ensure_terminal_run(run_id)
+    except APIError as exc:
+        await fail_persisted_run(run_id, exc)
+    except Exception:
+        await fail_persisted_run(run_id, APIError(500, "internal"))
     finally:
         await client.close()

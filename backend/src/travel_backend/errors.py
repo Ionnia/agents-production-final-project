@@ -7,6 +7,18 @@ from fastapi.responses import JSONResponse
 from .config import get_settings
 from .i18n import choose_locale, message
 
+FRONTEND_HTTP_ERROR_CODES = {
+    "validation_error",
+    "unauthorized",
+    "token_expired",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "plan_not_ready",
+    "rate_limited",
+    "internal",
+}
+
 
 class APIError(Exception):
     def __init__(
@@ -43,6 +55,11 @@ def error_payload(
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(APIError)
     async def handle_api_error(request: Request, exc: APIError) -> JSONResponse:
+        if request.url.path.startswith("/api/v1/") and exc.code not in FRONTEND_HTTP_ERROR_CODES:
+            return JSONResponse(
+                status_code=500,
+                content=error_payload("internal", request_locale(request)),
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content=error_payload(exc.code, request_locale(request), exc.message_text, exc.details),

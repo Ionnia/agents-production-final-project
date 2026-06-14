@@ -201,6 +201,7 @@ class Message(Base):
     __tablename__ = "messages"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_id)
+    agent_message_id: Mapped[str | None] = mapped_column(String(200), index=True)
     session_id: Mapped[str] = mapped_column(
         ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True
     )

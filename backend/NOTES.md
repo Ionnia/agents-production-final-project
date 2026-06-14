@@ -22,9 +22,12 @@
 - Package-tour cost is not double-counted: included flight/hotel components are not added again.
 - Frontend OpenAPI paths are mounted under `/api/v1` because its `servers` entry and the global
   specification define that base path. Internal Contract B paths are mounted under `/internal`.
-- `app/` is a stable facade matching the requested backend layout and ASGI command. The substantive
-  implementation remains in `src/travel_backend/` to preserve an installable src-layout package
-  without duplicating runtime logic.
+- `app/` contains only `__init__.py` and `main.py`, preserving the `app.main:app` ASGI command
+  without maintaining duplicate re-export modules. Runtime logic lives in `src/travel_backend/`.
+- Agent message IDs are untrusted correlation values. Persisted messages always receive a local
+  UUID; `agent_message_id` is private storage metadata and is not part of the frontend contract.
+- Backend-only upstream failures (`timeout`, `agent_unavailable`) remain available in SSE run
+  errors, while frontend HTTP responses normalize them to the frozen `internal` code.
 
 ## Runtime
 
@@ -32,6 +35,12 @@ The target runtime is Python 3.13.7. Dependencies are managed only through `pypr
 `uv sync`. SQLite is the MVP database; SQLAlchemy models and Alembic keep the persistence boundary
 portable. Reference recommendation CSVs remain evaluation fixtures rather than production
 selection logic.
+
+Application startup assumes `uv run alembic upgrade head` has already completed. It does not call
+`create_all`; that helper is reserved for isolated tests. Migration `20260614_0001` still uses
+`Base.metadata.create_all` and therefore reflects current metadata on a fresh database. Later
+migrations remain conditional so upgrades from older databases are safe. Rewriting migration 0001
+is intentionally deferred beyond the MVP.
 
 ## Remaining MVP limitations
 
@@ -44,6 +53,8 @@ selection logic.
   or automatic retry policy.
 - SQLite is suitable for the MVP and tests; production multi-worker deployment should use
   PostgreSQL and a distributed rate-limit/event notification layer.
+- Seed reconciliation is transactional and repair-oriented but does not provide a distributed lock
+  for concurrent startup across multiple production replicas.
 - Inventory still lacks availability, capacity, and layover duration, so those checks can only
   produce warnings rather than hard filtering.
 - Localization currently provides backend-owned messages for `ru-RU` and `en-US`; domain content

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api import auth, chat, groups, internal, plans, sessions
 from .config import get_settings
-from .database import SessionFactory, create_schema
+from .database import SessionFactory
 from .errors import install_error_handlers
 from .logging import configure_logging
 from .seed import seed_data
@@ -18,7 +18,6 @@ logger = logging.getLogger("travel_backend")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await create_schema()
     async with SessionFactory() as db:
         await seed_data(db)
     yield
