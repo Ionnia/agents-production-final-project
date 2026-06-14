@@ -6,7 +6,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: [],
+    setupFiles: ['src/test-setup.ts'],
     include: ['src/**/*.spec.ts'],
+    env: { VITE_API_BASE: 'http://localhost/api/v1' },
   },
 })

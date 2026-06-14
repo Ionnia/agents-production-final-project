@@ -9,7 +9,7 @@ import type {
 let tokenGetter: () => string | null = () => null
 export function setTokenGetter(fn: () => string | null) { tokenGetter = fn }
 
-export const client = createClient({ getToken: () => tokenGetter() })
+export const client = createClient({ baseUrl: import.meta.env.VITE_API_BASE || '/api/v1', getToken: () => tokenGetter() })
 
 export const api = {
   // Auth
