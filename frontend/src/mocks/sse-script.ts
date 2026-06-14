@@ -18,10 +18,6 @@ export function buildRunFrames(spec: RunSpec): SseEvent[] {
     frames.push({ event: 'clarifying_question', data: { run_id: runId, question: {
       id: 'q-' + runId, text: 'Какой формат отдыха предпочитаете?', allow_freeform: true,
       options: [{ id: 'opt-beach', label: 'Пляжный отдых' }, { id: 'opt-city', label: 'Город + море' }, { id: 'opt-islands', label: 'Острова' }] } } })
-    // also build a preliminary plan preview so callers can see map/plan_status
-    frames.push({ event: 'plan_status', data: { run_id: runId, plan_id: planId, status: 'building' } })
-    const points = spec.points ?? [mp('Москва', 'origin', 0), mp('Рим', 'destination', 1), mp('Флоренция', 'stop', 2)]
-    frames.push({ event: 'map', data: { run_id: runId, plan_id: planId, points } })
     frames.push({ event: 'run_status', data: { run_id: runId, status: 'completed' } })
     return frames
   }
