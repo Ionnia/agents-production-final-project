@@ -59,4 +59,5 @@ function onAnswer(optionIds: string[], freeform?: string) {
 .composer-slot.bottom { top: calc(100% - 96px); }
 .hero-enter-active, .hero-leave-active { transition: opacity .35s, transform .35s; }
 .hero-enter-from, .hero-leave-to { opacity: 0; transform: translateY(-14px); }
+@media (max-width: 600px) { .hero h1 { font-size: 28px; } .thread { width: 94%; } }
 </style>

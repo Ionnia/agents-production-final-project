@@ -42,4 +42,5 @@ async function logout() { await auth.logout(); router.push('/login') }
 .logout { padding: 9px; border: none; border-radius: 10px; background: rgba(0,0,0,.08); color: #3a3024; cursor: pointer; }
 .slide-enter-active, .slide-leave-active { transition: transform .42s cubic-bezier(.5,.05,.1,1); }
 .slide-enter-from, .slide-leave-to { transform: translateX(-104%); }
+@media (max-width: 480px) { .panel { width: 100vw; border-radius: 0; } }
 </style>
