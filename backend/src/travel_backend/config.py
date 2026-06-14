@@ -7,17 +7,17 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite+aiosqlite:///./backend.db"
-    jwt_secret: str = "development-only-secret-change-me"
-    access_token_ttl_minutes: int = 15
-    refresh_token_ttl_days: int = 30
-    backend_tool_token: str = "development-backend-tool-token"
-    agent_service_url: str = "http://localhost:8001"
-    agent_service_token: str = "development-agent-service-token"
-    default_locale: str = "ru-RU"
-    supported_locales: Annotated[list[str], NoDecode] = ["ru-RU", "en-US"]
-    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
-    log_level: str = "INFO"
+    database_url: str
+    jwt_secret: str
+    access_token_ttl_minutes: int
+    refresh_token_ttl_days: int
+    backend_tool_token: str
+    agent_service_url: str
+    agent_service_token: str
+    default_locale: str
+    supported_locales: Annotated[list[str], NoDecode]
+    cors_origins: Annotated[list[str], NoDecode]
+    log_level: str
     agent_connect_timeout_seconds: float = 5.0
     agent_read_timeout_seconds: float = 120.0
     stream_ticket_ttl_seconds: int = 60

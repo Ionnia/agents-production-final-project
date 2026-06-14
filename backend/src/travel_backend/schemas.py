@@ -16,11 +16,11 @@ class RegisterRequest(APIModel):
 
 class LoginRequest(APIModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=200)
 
 
 class RefreshRequest(APIModel):
-    refresh_token: str = Field(min_length=20)
+    refresh_token: str = Field(min_length=20, max_length=500)
 
 
 class PreferenceInput(APIModel):
@@ -67,9 +67,7 @@ class ChatRequest(APIModel):
 
     @model_validator(mode="after")
     def one_input_mode(self) -> "ChatRequest":
-        answer = self.in_reply_to_question_id and (
-            self.selected_option_ids or self.freeform
-        )
+        answer = self.in_reply_to_question_id and (self.selected_option_ids or self.freeform)
         if bool(self.message) == bool(answer):
             raise ValueError("provide message or a clarifying-question answer")
         return self
@@ -167,4 +165,3 @@ class AgentEvent(APIModel):
 class HealthResponse(APIModel):
     status: Literal["ok", "degraded"]
     detail: str | None = None
-

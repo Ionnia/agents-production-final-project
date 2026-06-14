@@ -27,14 +27,132 @@ from .serializers import clean, iso
 from .validation import validate_selection
 
 TERMINAL_STATUSES = {"completed", "cancelled", "error"}
+PUBLIC_ERROR_CODES = {
+    "validation_error",
+    "unauthorized",
+    "token_expired",
+    "forbidden",
+    "not_found",
+    "conflict",
+    "plan_not_ready",
+    "rate_limited",
+    "agent_unavailable",
+    "timeout",
+    "internal",
+}
+AGENT_EVENT_FIELDS = {
+    "run_status": {"status"},
+    "message_delta": {"message_id", "delta"},
+    "message": {"message"},
+    "clarifying_question": {"question"},
+    "plan_status": {"status"},
+    "plan": {"plan"},
+    "constraints_conflict": {"message", "suggested_relaxations"},
+    "escalation": {"reason", "message"},
+    "observability": {"kind"},
+    "error": {"error"},
+}
+
+
+def run_locale(run: Run) -> str:
+    return run.input_payload.get("locale", get_settings().default_locale)
+
+
+def safe_message(code: str, locale: str) -> str:
+    translated = message(code, locale)
+    return message("internal", locale) if translated == code else translated
+
+
+def validate_agent_event(run: Run, event_name: str, data: dict[str, Any]) -> None:
+    required = AGENT_EVENT_FIELDS.get(event_name)
+    if required is None or not isinstance(data, dict):
+        raise APIError(422, "validation_error", details={"source": "agent_event"})
+    if not isinstance(data.get("agent_run_id"), str):
+        raise APIError(422, "validation_error", details={"source": "agent_run_id"})
+    if run.agent_run_id and data["agent_run_id"] != run.agent_run_id:
+        raise APIError(422, "validation_error", details={"source": "agent_run_id_mismatch"})
+    if not required <= data.keys():
+        raise APIError(422, "validation_error", details={"source": "agent_event_fields"})
+
+    if event_name == "run_status" and data["status"] not in {
+        "started",
+        "running",
+        "completed",
+        "cancelled",
+        "error",
+    }:
+        raise APIError(422, "validation_error", details={"source": "agent_run_status"})
+    if event_name == "run_status" and data.get("outcome") not in {
+        None,
+        "recommendation",
+        "clarification",
+        "constraints_conflict",
+        "escalation",
+    }:
+        raise APIError(422, "validation_error", details={"source": "agent_run_outcome"})
+    if event_name == "plan_status" and data["status"] not in {"building", "ready", "error"}:
+        raise APIError(422, "validation_error", details={"source": "agent_plan_status"})
+    if event_name == "message":
+        source = data["message"]
+        if (
+            not isinstance(source, dict)
+            or source.get("role") != "assistant"
+            or not isinstance(source.get("id"), str)
+            or not isinstance(source.get("content"), str)
+        ):
+            raise APIError(422, "validation_error", details={"source": "agent_message"})
+    if event_name == "message_delta" and not all(
+        isinstance(data.get(key), str) for key in ("message_id", "delta")
+    ):
+        raise APIError(422, "validation_error", details={"source": "agent_message_delta"})
+    if event_name == "clarifying_question":
+        question = data["question"]
+        if (
+            not isinstance(question, dict)
+            or not isinstance(question.get("id"), str)
+            or not isinstance(question.get("text"), str)
+            or not isinstance(question.get("options"), list)
+            or not isinstance(question.get("allow_freeform"), bool)
+            or not all(
+                isinstance(option, dict)
+                and isinstance(option.get("id"), str)
+                and isinstance(option.get("label"), str)
+                for option in question.get("options", [])
+            )
+        ):
+            raise APIError(422, "validation_error", details={"source": "agent_question"})
+    if event_name == "constraints_conflict" and (
+        not isinstance(data["message"], str)
+        or not isinstance(data["suggested_relaxations"], list)
+        or not all(isinstance(item, str) for item in data["suggested_relaxations"])
+    ):
+        raise APIError(422, "validation_error", details={"source": "agent_conflict"})
+    if event_name == "escalation" and not all(
+        isinstance(data.get(key), str) for key in ("reason", "message")
+    ):
+        raise APIError(422, "validation_error", details={"source": "agent_escalation"})
+    if event_name == "observability" and data["kind"] not in {
+        "node_started",
+        "node_finished",
+        "tool_call",
+        "tool_result",
+        "tool_error",
+    }:
+        raise APIError(422, "validation_error", details={"source": "agent_observability"})
+    if event_name == "error":
+        error = data["error"]
+        if (
+            not isinstance(error, dict)
+            or not isinstance(error.get("code"), str)
+            or not isinstance(error.get("message"), str)
+        ):
+            raise APIError(422, "validation_error", details={"source": "agent_error"})
 
 
 async def append_event(
     db: AsyncSession, run_id: str, event_name: str, payload: dict[str, Any]
 ) -> RunEvent:
-    current = await db.scalar(
-        select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run_id)
-    )
+    current = await db.scalar(select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run_id))
     event = RunEvent(
         run_id=run_id,
         sequence=(current or 0) + 1,
@@ -77,9 +195,7 @@ async def get_group(db: AsyncSession, group_id: str | None) -> TravelGroup | Non
     return await db.scalar(
         select(TravelGroup)
         .where(TravelGroup.id == group_id)
-        .options(
-            selectinload(TravelGroup.members).selectinload(GroupMember.preferences)
-        )
+        .options(selectinload(TravelGroup.members).selectinload(GroupMember.preferences))
     )
 
 
@@ -102,6 +218,14 @@ async def persist_draft(
     session = await db.get(ChatSession, run.session_id)
     group = await get_group(db, session.group_id if session else None)
     validation = await validate_selection(db, group, draft.selections)
+    if group and group.destination and draft.destination and draft.destination != group.destination:
+        validation["valid"] = False
+        validation["hard_violations"].append(
+            {
+                "code": "plan_destination_mismatch",
+                "message": "Направление плана не соответствует направлению группы.",
+            }
+        )
     if not validation["valid"]:
         raise APIError(
             422,
@@ -111,9 +235,7 @@ async def persist_draft(
 
     plan = await ensure_plan(db, run)
     await db.execute(delete(PlanMapPoint).where(PlanMapPoint.plan_id == plan.id))
-    await db.execute(
-        delete(PlanCalendarEvent).where(PlanCalendarEvent.plan_id == plan.id)
-    )
+    await db.execute(delete(PlanCalendarEvent).where(PlanCalendarEvent.plan_id == plan.id))
     plan.run_id = run.id
     plan.status = "ready"
     plan.destination = draft.destination or (group.destination if group else None)
@@ -141,13 +263,9 @@ async def persist_draft(
                 details={"source": "agent_map_point", "index": index},
             ) from exc
         if kind not in {"origin", "destination", "stop"}:
-            raise APIError(
-                422, "validation_error", details={"source": "agent_map_point_kind"}
-            )
+            raise APIError(422, "validation_error", details={"source": "agent_map_point_kind"})
         if not -90 <= lat <= 90 or not -180 <= lng <= 180:
-            raise APIError(
-                422, "validation_error", details={"source": "agent_map_coordinates"}
-            )
+            raise APIError(422, "validation_error", details={"source": "agent_map_coordinates"})
         point = PlanMapPoint(
             plan_id=plan.id,
             name=name,
@@ -275,6 +393,7 @@ async def save_assistant_message(
 async def process_agent_event(
     db: AsyncSession, run: Run, event_name: str, data: dict[str, Any]
 ) -> None:
+    validate_agent_event(run, event_name, data)
     if event_name == "observability":
         return
     if event_name == "message_delta":
@@ -321,21 +440,20 @@ async def process_agent_event(
                     "run_id": run.id,
                     "plan_id": plan.id,
                     "status": "error",
-                    "error": data.get("error") or "Не удалось построить план.",
+                    "error": message("internal", run_locale(run)),
                 },
             )
         # "ready" is deliberately ignored until the draft is validated and persisted.
     elif event_name == "plan":
         await persist_draft(db, run, data["plan"])
     elif event_name == "constraints_conflict":
-        await save_assistant_message(
-            db, run, data.get("message") or message("constraints_conflict")
-        )
+        await save_assistant_message(db, run, message("constraints_conflict", run_locale(run)))
     elif event_name == "escalation":
-        await save_assistant_message(db, run, data.get("message") or message("escalation"))
+        await save_assistant_message(db, run, message("escalation", run_locale(run)))
     elif event_name == "error":
         run.status = "error"
-        run.error_code = data.get("error", {}).get("code", "internal")
+        candidate_code = data["error"]["code"]
+        run.error_code = candidate_code if candidate_code in PUBLIC_ERROR_CODES else "internal"
         await append_event(
             db,
             run.id,
@@ -344,9 +462,7 @@ async def process_agent_event(
                 "run_id": run.id,
                 "error": {
                     "code": run.error_code,
-                    "message": data.get("error", {}).get(
-                        "message", "Произошла ошибка при построении плана."
-                    ),
+                    "message": safe_message(run.error_code, run_locale(run)),
                 },
             },
         )
@@ -389,9 +505,7 @@ async def fail_run(db: AsyncSession, run: Run, error: APIError) -> None:
         "error",
         {"run_id": run.id, "error": {"code": error.code, "message": message(error.code)}},
     )
-    await append_event(
-        db, run.id, "run_status", {"run_id": run.id, "status": "error"}
-    )
+    await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "error"})
 
 
 async def execute_run(run_id: str) -> None:
@@ -412,11 +526,7 @@ async def execute_run(run_id: str) -> None:
                 "locale": run.input_payload.get("locale", settings.default_locale),
                 **({"thread_id": session.thread_id} if session and session.thread_id else {}),
                 **({"group_id": session.group_id} if session and session.group_id else {}),
-                **(
-                    {"active_plan_id": run.active_plan_id}
-                    if run.active_plan_id
-                    else {}
-                ),
+                **({"active_plan_id": run.active_plan_id} if run.active_plan_id else {}),
             }
             if run.mode in {"new_trip", "qa"}:
                 payload["message"] = run.input_payload["message"]
@@ -427,6 +537,8 @@ async def execute_run(run_id: str) -> None:
             try:
                 created = await client.create_run(payload, run.correlation_id)
                 run.agent_run_id = created.agent_run_id
+                run.agent_thread_id = created.thread_id
+                run.agent_stream_url = created.stream_url
                 if session:
                     session.thread_id = created.thread_id
                 run.status = "running"

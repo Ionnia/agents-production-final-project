@@ -1,10 +1,12 @@
 # Backend Service Specification
 
-**Status:** Implemented MVP.
+**Status:** Implemented and verified MVP.
 
 The `backend/` module is the FastAPI BFF between the Vue frontend and the external Agent Service.
 It implements the frozen frontend contract in `api/openapi.yaml` and the Backend Internal Tool API
 in `agent-service/internal-tools-openapi.yaml`. The Agent Service itself is not implemented here.
+The supported ASGI entry point is `app.main:app`; `app/` exposes the documented module layout while
+the implementation lives in the installable `travel_backend` package.
 
 ## Responsibilities
 
@@ -14,7 +16,11 @@ in `agent-service/internal-tools-openapi.yaml`. The Agent Service itself is not 
 - Read-only internal access to group context and offer search, protected by
   `BACKEND_TOOL_TOKEN` and required `X-Correlation-ID`.
 - Agent Service run creation, SSE consumption, cancellation, semantic event normalization, and
-  controlled timeout/unavailable errors.
+  controlled timeout/unavailable errors. Each run stores the backend and agent run IDs, agent
+  thread ID, agent stream URL, session, user, group, status, and correlation ID.
+- Contract A client coverage for run create/stream/status/cancel, thread state, health, and service
+  info. Protected calls send the service token explicitly; health does not. Agent-provided stream
+  URLs must remain on the configured Agent Service origin and expected run stream path.
 - Validation and hydration of every agent-proposed draft before persistence.
 - Russian user-facing messages by default, with a basic `en-US` fallback.
 
@@ -24,6 +30,9 @@ SQLAlchemy 2 and Alembic manage the database selected by `DATABASE_URL`; SQLite 
 Startup idempotently imports flights, hotels, tours, travelers, preferences, and six scenario groups
 from `data/travelers/`. Scenario groups are internal-only. User-created groups are private and use
 UUIDs.
+
+All environment variables listed in `.env.example` are required. There are no built-in JWT or
+service-token defaults.
 
 ## Streaming
 
@@ -35,6 +44,22 @@ Agent `ready` events are not forwarded directly. The backend loads referenced of
 cost, applies hard constraints, writes the plan/map/calendar atomically, and only then emits
 frontend `plan_status=ready`.
 
+Every Agent Service event is checked for a supported semantic name, required fields, and matching
+`agent_run_id`. `observability` is dropped. Conflict, escalation, plan-error, and run-error text is
+localized by the backend rather than forwarding arbitrary agent text. The emitted frontend event
+vocabulary is limited to the seven event types frozen in `api/openapi.yaml`.
+
+## Security and verification
+
+Request logging records no bodies, query strings, authorization headers, passwords, refresh
+tokens, or stream tickets. Sensitive token inputs have bounded request schemas, and service-token
+comparison is constant-time.
+
+The automated suite verifies route registration and authentication boundaries, resource ownership,
+refresh rotation/replay, ticket hashing/scope/replay/expiry, persisted SSE reconnect, Contract A
+error handling, event normalization, plan persistence gating, deterministic seed import, read-only
+internal calls, business constraints, localization fallback, and placeholder-only example secrets.
+
 ## Development
 
 ```bash
@@ -42,9 +67,10 @@ cd backend
 uv python install 3.13.7
 uv sync
 uv run alembic upgrade head
-uv run uvicorn travel_backend.main:app --reload
-uv run pytest
+uv run uvicorn app.main:app --reload --port 8000
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 Configuration is documented in `.env.example`; tests supply settings without real secrets.
-

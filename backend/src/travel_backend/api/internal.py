@@ -24,9 +24,7 @@ router = APIRouter(
 async def any_group(db: Database, group_id: str) -> TravelGroup:
     group = await db.scalar(
         select(TravelGroup)
-        .options(
-            selectinload(TravelGroup.members).selectinload(GroupMember.preferences)
-        )
+        .options(selectinload(TravelGroup.members).selectinload(GroupMember.preferences))
         .where(TravelGroup.id == group_id)
     )
     if group is None:
@@ -82,9 +80,7 @@ async def search_flights(body: FlightSearchRequest, db: Database) -> dict:
     if body.budget_rub is not None:
         query = query.where(FlightOffer.price_rub <= body.budget_rub)
     if body.avoid_night_arrival:
-        query = query.where(
-            FlightOffer.arrival_time < "23:00", FlightOffer.arrival_time >= "05:00"
-        )
+        query = query.where(FlightOffer.arrival_time < "23:00", FlightOffer.arrival_time >= "05:00")
     items = (await db.scalars(query.order_by(FlightOffer.price_rub))).all()
     return {"items": [flight_dict(item) for item in items]}
 

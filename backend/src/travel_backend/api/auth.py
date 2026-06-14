@@ -113,4 +113,3 @@ async def logout(body: RefreshRequest, user: CurrentUser, db: Database) -> Respo
 @router.get("/me")
 async def me(user: CurrentUser) -> dict:
     return user_dict(user)
-

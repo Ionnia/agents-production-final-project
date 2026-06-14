@@ -45,9 +45,7 @@ def install_error_handlers(app: FastAPI) -> None:
     async def handle_api_error(request: Request, exc: APIError) -> JSONResponse:
         return JSONResponse(
             status_code=exc.status_code,
-            content=error_payload(
-                exc.code, request_locale(request), exc.message_text, exc.details
-            ),
+            content=error_payload(exc.code, request_locale(request), exc.message_text, exc.details),
         )
 
     @app.exception_handler(RequestValidationError)
@@ -73,4 +71,3 @@ def install_error_handlers(app: FastAPI) -> None:
             status_code=500,
             content=error_payload("internal", request_locale(request)),
         )
-

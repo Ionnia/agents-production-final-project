@@ -1,11 +1,4 @@
-from conftest import register_user
-
-
-def tool_headers():
-    return {
-        "Authorization": "Bearer test-tool-token",
-        "X-Correlation-ID": "test-correlation",
-    }
+from conftest import register_user, tool_headers
 
 
 async def test_internal_auth_is_separate_from_user_jwt(client, unique_email):
@@ -20,9 +13,7 @@ async def test_internal_auth_is_separate_from_user_jwt(client, unique_email):
     )
     assert missing_correlation.status_code == 422
 
-    allowed = await client.get(
-        "/internal/groups/G-0001/context", headers=tool_headers()
-    )
+    allowed = await client.get("/internal/groups/G-0001/context", headers=tool_headers())
     assert allowed.status_code == 200, allowed.text
     assert allowed.json()["members"][0]["traveler_id"].startswith("T-")
 
@@ -69,4 +60,3 @@ async def test_search_and_plan_validation(client):
     assert package.status_code == 200
     assert package.json()["valid"] is True
     assert package.json()["budget_left_rub"] == 5300
-

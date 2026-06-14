@@ -6,4 +6,3 @@ def test_default_messages_are_russian_and_codes_stay_english():
     assert "авториза" in message("unauthorized", "ru-RU").lower()
     assert "Authentication" in message("unauthorized", "en-US")
     assert "unauthorized".isascii()
-

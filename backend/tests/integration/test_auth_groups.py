@@ -14,15 +14,11 @@ async def test_auth_refresh_rotation_and_russian_errors(client, unique_email):
     assert any("а" <= char.lower() <= "я" for char in duplicate.json()["error"]["message"])
 
     refresh_token = registered["tokens"]["refresh_token"]
-    rotated = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
-    )
+    rotated = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert rotated.status_code == 200
     assert rotated.json()["refresh_token"] != refresh_token
 
-    replay = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
-    )
+    replay = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert replay.status_code == 401
     assert replay.json()["error"]["code"] == "unauthorized"
 
@@ -66,4 +62,3 @@ async def test_public_groups_are_private_and_seed_groups_are_hidden(client, uniq
     _, other_headers = await register_user(client, unique_email.replace("user", "other"))
     hidden = await client.get(f"/api/v1/groups/{group['id']}", headers=other_headers)
     assert hidden.status_code == 404
-

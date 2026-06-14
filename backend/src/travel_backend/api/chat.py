@@ -110,6 +110,7 @@ async def post_chat(
     run = Run(
         session_id=session.id,
         user_id=user.id,
+        group_id=session.group_id,
         correlation_id=str(uuid4()),
         mode=mode,
         input_payload=payload,
@@ -126,9 +127,7 @@ async def post_chat(
             answer=answer,
         )
     )
-    await append_event(
-        db, run.id, "run_status", {"run_id": run.id, "status": "started"}
-    )
+    await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "started"})
     await db.commit()
     background.add_task(execute_run, run.id)
     return {"run_id": run.id, "session_id": session.id}
@@ -157,6 +156,8 @@ async def stream_run(
     ticket: str = Query(...),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> EventSourceResponse:
+    if not 20 <= len(ticket) <= 200:
+        raise APIError(401, "unauthorized")
     settings = get_settings()
     async with SessionFactory() as db:
         entity = await db.scalar(
@@ -234,9 +235,7 @@ async def cancel_run(run_id: str, user: CurrentUser, db: Database) -> dict:
             await client.close()
     run.status = "cancelled"
     run.finished_at = utcnow()
-    await append_event(
-        db, run.id, "run_status", {"run_id": run.id, "status": "cancelled"}
-    )
+    await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "cancelled"})
     await db.commit()
     return {"run_id": run.id, "status": "cancelling"}
 
@@ -251,9 +250,7 @@ async def modify_plan(
     db: Database,
 ) -> dict:
     check_rate_limit(f"modify:{user.id}")
-    plan = await db.scalar(
-        select(Plan).where(Plan.id == plan_id, Plan.user_id == user.id)
-    )
+    plan = await db.scalar(select(Plan).where(Plan.id == plan_id, Plan.user_id == user.id))
     if plan is None:
         raise APIError(404, "not_found")
     if plan.status != "ready":
@@ -268,6 +265,7 @@ async def modify_plan(
     run = Run(
         session_id=plan.session_id,
         user_id=user.id,
+        group_id=plan.group_id,
         active_plan_id=plan.id,
         correlation_id=str(uuid4()),
         mode="modify",
@@ -278,9 +276,7 @@ async def modify_plan(
     await db.flush()
     plan.status = "building"
     plan.run_id = run.id
-    await append_event(
-        db, run.id, "run_status", {"run_id": run.id, "status": "started"}
-    )
+    await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "started"})
     await append_event(
         db,
         run.id,

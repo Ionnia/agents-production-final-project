@@ -31,9 +31,7 @@ def clean(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def preference_dict(item: Preference) -> dict[str, Any]:
-    return clean(
-        {"id": item.id, "type": item.type, "value": item.value, "comment": item.comment}
-    )
+    return clean({"id": item.id, "type": item.type, "value": item.value, "comment": item.comment})
 
 
 def member_dict(item: GroupMember) -> dict[str, Any]:
@@ -137,9 +135,7 @@ async def plan_dict(db: AsyncSession, item: Plan) -> dict[str, Any]:
     tour = await db.get(TourOffer, item.tour_id) if item.tour_id else None
     points = (
         await db.scalars(
-            select(PlanMapPoint)
-            .where(PlanMapPoint.plan_id == item.id)
-            .order_by(PlanMapPoint.order)
+            select(PlanMapPoint).where(PlanMapPoint.plan_id == item.id).order_by(PlanMapPoint.order)
         )
     ).all()
     nights = (
@@ -245,4 +241,3 @@ async def calendar_dict(db: AsyncSession, plan_id: str) -> dict[str, Any]:
             for event in events
         ],
     }
-

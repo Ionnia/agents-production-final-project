@@ -2,7 +2,12 @@ from travel_backend.main import app
 
 
 def test_frozen_contract_routes_are_registered():
-    routes = {(method, route.path) for route in app.routes for method in route.methods or []}
+    routes = {
+        (method, route.path)
+        for route in app.routes
+        for method in route.methods or []
+        if route.path.startswith("/api/v1") or route.path.startswith("/internal")
+    }
     expected = {
         ("POST", "/api/v1/auth/register"),
         ("POST", "/api/v1/auth/login"),
@@ -33,5 +38,4 @@ def test_frozen_contract_routes_are_registered():
         ("POST", "/internal/tours/search"),
         ("POST", "/internal/plans/validate"),
     }
-    assert expected <= routes
-
+    assert routes == expected

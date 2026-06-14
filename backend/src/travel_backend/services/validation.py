@@ -78,9 +78,7 @@ async def validate_selection(
 
     max_stops = constraints.get("max_stops")
     if max_stops is not None and flight and flight.stops > int(max_stops):
-        hard.append(
-            violation("too_many_stops", "Количество пересадок превышает допустимое.")
-        )
+        hard.append(violation("too_many_stops", "Количество пересадок превышает допустимое."))
 
     avoid_night = constraints.get("avoid_night_flights")
     if avoid_night and flight:
@@ -94,18 +92,14 @@ async def validate_selection(
 
     if group:
         pref_pairs = {
-            (pref.type, pref.value)
-            for member in group.members
-            for pref in member.preferences
+            (pref.type, pref.value) for member in group.members for pref in member.preferences
         }
         if ("baggage", "included") in pref_pairs and flight and not flight.baggage_included:
             hard.append(violation("baggage_required", "Группе требуется включённый багаж."))
         if ("meal", "breakfast") in pref_pairs and hotel and not hotel.breakfast_included:
             hard.append(violation("breakfast_required", "Группе требуется завтрак."))
         if ("cancellation", "free") in pref_pairs and hotel and not hotel.free_cancellation:
-            hard.append(
-                violation("free_cancellation_required", "Требуется бесплатная отмена.")
-            )
+            hard.append(violation("free_cancellation_required", "Требуется бесплатная отмена."))
         if any(member.age is not None and member.age < 7 for member in group.members):
             if flight:
                 arrival = time.fromisoformat(flight.arrival_time)

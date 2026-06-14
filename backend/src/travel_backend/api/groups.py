@@ -20,9 +20,7 @@ router = APIRouter(prefix="/groups", tags=["Groups"])
 async def owned_group(db: Database, user_id: str, group_id: str) -> TravelGroup:
     group = await db.scalar(
         select(TravelGroup)
-        .options(
-            selectinload(TravelGroup.members).selectinload(GroupMember.preferences)
-        )
+        .options(selectinload(TravelGroup.members).selectinload(GroupMember.preferences))
         .where(
             TravelGroup.id == group_id,
             TravelGroup.owner_id == user_id,
@@ -137,4 +135,3 @@ async def get_group_plans(group_id: str, user: CurrentUser, db: Database) -> dic
         )
     ).all()
     return {"items": [await plan_summary_dict(db, item) for item in plans]}
-

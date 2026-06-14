@@ -60,7 +60,7 @@ added/removed points, which starts a new rebuild run. Lifecycles:
 | **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Defined; backend client + Contract B implemented, Agent Service pending |
 | **Frontend** | [`frontend/`](./frontend/) | [`frontend/src/SPEC.md`](./frontend/src/SPEC.md) (UI/visual scenes) | UI shell + animated backgrounds; API client not built |
 | **Domain data** | [`data/`](./data/) | [`README.md`](./README.md) (dataset description) | Present (synthetic seed data) |
-| **Backend service (BFF)** | [`backend/`](./backend/) | [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md) | Implemented MVP; FastAPI, persistence, auth, internal tools, Agent Service client, SSE |
+| **Backend service (BFF)** | [`backend/`](./backend/) | [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md) | Implemented and verified MVP; FastAPI, persistence, auth, internal tools, Agent Service client, SSE |
 | **Agent Service** | _not in repo yet_ | — | Planned; implements Contract A; LangGraph + RAG/LLM |
 
 ### 2.1 Frontend↔Backend contract (`api/`)
@@ -104,7 +104,10 @@ Synthetic seed data the agent reasons over, described in [`README.md`](./README.
 Python 3.13 FastAPI BFF implementing the frozen frontend API and Backend Internal Tool API. It owns
 authentication, access control, SQLite persistence, CSV seed import, sessions/groups/plans, the
 persistent frontend SSE event log, and validation of Agent Service draft plans. See
-[`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md).
+[`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md). Its supported ASGI entry point is
+`backend/app/main.py` (`uvicorn app.main:app` from the backend directory). The verified backend
+security boundary separates user JWTs, internal service tokens, and one-time stream tickets, and
+treats Agent Service responses and plan proposals as untrusted input.
 
 ## 3. Cross-cutting conventions
 
