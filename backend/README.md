@@ -70,3 +70,21 @@ uv run ruff format --check .
 Tests use an isolated SQLite database and mocked Agent Service HTTP/SSE responses. They require no
 real service token, LLM, or `.env` file.
 
+The suite covers all registered frontend and internal routes, JWT/service-token separation,
+password and token hashing, refresh rotation/replay, cross-user ownership, stream ticket
+expiry/scope/single-use behavior, SSE replay and payload vocabulary, Agent Service timeouts and
+malformed responses, deterministic seed import, offer search, plan validation, and Russian locale
+fallbacks.
+
+## Security behavior
+
+- Passwords use Argon2; refresh tokens and stream tickets are stored only as SHA-256 hashes.
+- Protected `/api/v1/*` routes require an access JWT. `/internal/*` accepts only
+  `BACKEND_TOOL_TOKEN` plus `X-Correlation-ID`.
+- The SSE URL accepts a short-lived run-scoped ticket, never an access JWT. A consumed ticket can
+  only resume the same stream with `Last-Event-ID` during its reconnect lease.
+- Request logs contain method, path, status, and correlation ID only. Bodies, query strings,
+  authorization headers, and tokens are excluded.
+- Agent Service responses and semantic events are treated as untrusted. The backend validates
+  event structure and run identity, rejects foreign stream URLs, recalculates plan cost, resolves
+  offer IDs, and applies domain validation before persistence.

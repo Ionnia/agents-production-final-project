@@ -156,6 +156,8 @@ async def stream_run(
     ticket: str = Query(...),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ) -> EventSourceResponse:
+    if not 20 <= len(ticket) <= 200:
+        raise APIError(401, "unauthorized")
     settings = get_settings()
     async with SessionFactory() as db:
         entity = await db.scalar(

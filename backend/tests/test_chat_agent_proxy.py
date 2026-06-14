@@ -177,6 +177,25 @@ async def test_chat_calls_agent_and_persists_complete_mapping_and_plan(
         plan = await db.scalar(select(Plan).where(Plan.run_id == run.id))
         assert plan.status == "ready"
         assert plan.estimated_total_rub == 130500
+        events = (
+            await db.scalars(
+                select(RunEvent).where(RunEvent.run_id == run.id).order_by(RunEvent.sequence)
+            )
+        ).all()
+
+    required_fields = {
+        "run_status": {"run_id", "status"},
+        "message_delta": {"run_id", "message_id", "delta"},
+        "message": {"run_id", "message"},
+        "clarifying_question": {"run_id", "question"},
+        "plan_status": {"run_id", "plan_id", "status"},
+        "map": {"run_id", "plan_id", "points"},
+        "error": {"run_id", "error"},
+    }
+    assert events
+    assert {event.event_name for event in events} <= required_fields.keys()
+    for event in events:
+        assert required_fields[event.event_name] <= event.payload.keys()
 
     assert SuccessfulAgentClient.create_payload["external_run_id"] == run_id
     assert SuccessfulAgentClient.create_payload["group_id"] == group["id"]

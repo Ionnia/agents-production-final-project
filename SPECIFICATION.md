@@ -105,7 +105,9 @@ Python 3.13 FastAPI BFF implementing the frozen frontend API and Backend Interna
 authentication, access control, SQLite persistence, CSV seed import, sessions/groups/plans, the
 persistent frontend SSE event log, and validation of Agent Service draft plans. See
 [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md). Its supported ASGI entry point is
-`backend/app/main.py` (`uvicorn app.main:app` from the backend directory).
+`backend/app/main.py` (`uvicorn app.main:app` from the backend directory). The verified backend
+security boundary separates user JWTs, internal service tokens, and one-time stream tickets, and
+treats Agent Service responses and plan proposals as untrusted input.
 
 ## 3. Cross-cutting conventions
 

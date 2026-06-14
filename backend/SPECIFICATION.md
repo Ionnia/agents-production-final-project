@@ -18,6 +18,9 @@ the implementation lives in the installable `travel_backend` package.
 - Agent Service run creation, SSE consumption, cancellation, semantic event normalization, and
   controlled timeout/unavailable errors. Each run stores the backend and agent run IDs, agent
   thread ID, agent stream URL, session, user, group, status, and correlation ID.
+- Contract A client coverage for run create/stream/status/cancel, thread state, health, and service
+  info. Protected calls send the service token explicitly; health does not. Agent-provided stream
+  URLs must remain on the configured Agent Service origin and expected run stream path.
 - Validation and hydration of every agent-proposed draft before persistence.
 - Russian user-facing messages by default, with a basic `en-US` fallback.
 
@@ -40,6 +43,22 @@ hashes, expire before first use, and receive a short reconnect lease after consu
 Agent `ready` events are not forwarded directly. The backend loads referenced offers, recalculates
 cost, applies hard constraints, writes the plan/map/calendar atomically, and only then emits
 frontend `plan_status=ready`.
+
+Every Agent Service event is checked for a supported semantic name, required fields, and matching
+`agent_run_id`. `observability` is dropped. Conflict, escalation, plan-error, and run-error text is
+localized by the backend rather than forwarding arbitrary agent text. The emitted frontend event
+vocabulary is limited to the seven event types frozen in `api/openapi.yaml`.
+
+## Security and verification
+
+Request logging records no bodies, query strings, authorization headers, passwords, refresh
+tokens, or stream tickets. Sensitive token inputs have bounded request schemas, and service-token
+comparison is constant-time.
+
+The automated suite verifies route registration and authentication boundaries, resource ownership,
+refresh rotation/replay, ticket hashing/scope/replay/expiry, persisted SSE reconnect, Contract A
+error handling, event normalization, plan persistence gating, deterministic seed import, read-only
+internal calls, business constraints, localization fallback, and placeholder-only example secrets.
 
 ## Development
 

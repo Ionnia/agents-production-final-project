@@ -16,11 +16,11 @@ class RegisterRequest(APIModel):
 
 class LoginRequest(APIModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=1, max_length=200)
 
 
 class RefreshRequest(APIModel):
-    refresh_token: str = Field(min_length=20)
+    refresh_token: str = Field(min_length=20, max_length=500)
 
 
 class PreferenceInput(APIModel):

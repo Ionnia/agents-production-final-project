@@ -51,3 +51,27 @@ async def test_stream_ticket_is_hashed_scoped_and_expires(client, unique_email):
     assert expired.status_code == 401
     wrong_run = await client.get(f"/api/v1/chat/{other_run_id}/stream?ticket={raw_ticket}")
     assert wrong_run.status_code == 401
+
+
+async def test_stream_rejects_access_jwt_as_query_ticket(client, unique_email):
+    registered, headers = await register_user(client, unique_email)
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        session = ChatSession(user_id=user.id, summary="JWT rejection")
+        db.add(session)
+        await db.flush()
+        run = Run(
+            session_id=session.id,
+            user_id=user.id,
+            correlation_id=str(uuid4()),
+            mode="qa",
+            status="completed",
+            input_payload={"message": "test"},
+        )
+        db.add(run)
+        await db.commit()
+        run_id = run.id
+    access_token = registered["tokens"]["access_token"]
+    response = await client.get(f"/api/v1/chat/{run_id}/stream?ticket={access_token}")
+    assert response.status_code == 401
+    assert headers["Authorization"].endswith(access_token)

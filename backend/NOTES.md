@@ -32,3 +32,19 @@ The target runtime is Python 3.13.7. Dependencies are managed only through `pypr
 `uv sync`. SQLite is the MVP database; SQLAlchemy models and Alembic keep the persistence boundary
 portable. Reference recommendation CSVs remain evaluation fixtures rather than production
 selection logic.
+
+## Remaining MVP limitations
+
+- Service-to-service authentication uses static bearer tokens, not mTLS or scoped service JWTs.
+- Rate limiting is process-local memory and is not coordinated across multiple backend workers.
+- Stream reconnect uses a short lease after first consumption to support browser `EventSource`;
+  it is single-use for an initial connection but intentionally reusable with `Last-Event-ID` during
+  that lease.
+- Agent calls have bounded connect/read timeouts and safe errors but no distributed circuit breaker
+  or automatic retry policy.
+- SQLite is suitable for the MVP and tests; production multi-worker deployment should use
+  PostgreSQL and a distributed rate-limit/event notification layer.
+- Inventory still lacks availability, capacity, and layover duration, so those checks can only
+  produce warnings rather than hard filtering.
+- Localization currently provides backend-owned messages for `ru-RU` and `en-US`; domain content
+  from the synthetic dataset is not translated.
