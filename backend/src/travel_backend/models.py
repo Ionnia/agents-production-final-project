@@ -248,6 +248,7 @@ class PlanMapPoint(Base):
     lng: Mapped[float] = mapped_column(Float)
     order: Mapped[int] = mapped_column(Integer)
     note: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
 
 class PlanCalendarEvent(Base):

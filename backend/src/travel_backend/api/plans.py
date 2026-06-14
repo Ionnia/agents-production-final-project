@@ -5,7 +5,7 @@ from ..errors import APIError
 from ..models import Plan, PlanMapPoint
 from ..schemas import RejectRequest
 from ..security import CurrentUser, Database
-from ..services.serializers import calendar_dict, clean, plan_dict
+from ..services.serializers import calendar_dict, map_point_dict, plan_dict
 
 router = APIRouter(prefix="/plans", tags=["Plans"])
 
@@ -54,20 +54,7 @@ async def get_map(plan_id: str, user: CurrentUser, db: Database) -> dict:
             select(PlanMapPoint).where(PlanMapPoint.plan_id == plan.id).order_by(PlanMapPoint.order)
         )
     ).all()
-    serialized = [
-        clean(
-            {
-                "id": item.id,
-                "name": item.name,
-                "kind": item.kind,
-                "lat": item.lat,
-                "lng": item.lng,
-                "order": item.order,
-                "note": item.note,
-            }
-        )
-        for item in points
-    ]
+    serialized = [map_point_dict(item) for item in points]
     response = {
         "plan_id": plan.id,
         "status": plan.status,

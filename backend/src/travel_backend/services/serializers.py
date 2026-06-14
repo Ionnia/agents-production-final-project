@@ -129,6 +129,21 @@ def tour_dict(item: TourOffer) -> dict[str, Any]:
     )
 
 
+def map_point_dict(item: PlanMapPoint) -> dict[str, Any]:
+    return clean(
+        {
+            **(item.details if isinstance(item.details, dict) else {}),
+            "id": item.id,
+            "name": item.name,
+            "kind": item.kind,
+            "lat": item.lat,
+            "lng": item.lng,
+            "order": item.order,
+            "note": item.note,
+        }
+    )
+
+
 async def plan_dict(db: AsyncSession, item: Plan) -> dict[str, Any]:
     flight = await db.get(FlightOffer, item.flight_id) if item.flight_id else None
     hotel = await db.get(HotelOffer, item.hotel_id) if item.hotel_id else None
@@ -163,20 +178,7 @@ async def plan_dict(db: AsyncSession, item: Plan) -> dict[str, Any]:
                     "tour": tour_dict(tour) if tour else None,
                 }
             ),
-            "map_points": [
-                clean(
-                    {
-                        "id": point.id,
-                        "name": point.name,
-                        "kind": point.kind,
-                        "lat": point.lat,
-                        "lng": point.lng,
-                        "order": point.order,
-                        "note": point.note,
-                    }
-                )
-                for point in points
-            ],
+            "map_points": [map_point_dict(point) for point in points],
             "created_at": iso(item.created_at),
             "updated_at": iso(item.updated_at),
         }

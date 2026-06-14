@@ -22,6 +22,8 @@ runtime implementation lives in the installable `travel_backend` package.
   info. Protected calls send the service token explicitly; health does not. Agent-provided stream
   URLs must remain on the configured Agent Service origin and expected run stream path.
 - Validation and hydration of every agent-proposed draft before persistence.
+- Strict validation and persistence of optional Agent-provided route timing, cost, calendar links,
+  provenance, and rich place-card content. The backend never generates missing place intelligence.
 - Backend-owned UUIDs for persisted messages. Optional Agent Service message IDs are retained in a
   private `agent_message_id` column for correlation and never become database primary keys or
   frontend message IDs. Streamed deltas and the corresponding final message share the same
@@ -53,10 +55,20 @@ Agent `ready` events are not forwarded directly. The backend loads referenced of
 cost, applies hard constraints, writes the plan/map/calendar atomically, and only then emits
 frontend `plan_status=ready`.
 
+Map points keep normalized route coordinates and ordering in columns, with validated optional
+place-card attributes stored as JSON. Public map fields are flat and backward-compatible.
+`description` is a legacy alias of `summary`. Private Agent calendar correlation values are
+resolved to backend-owned calendar event IDs and are never returned.
+
 Every Agent Service event is checked for a supported semantic name, required fields, and matching
 `agent_run_id`. `observability` is dropped. Conflict, escalation, plan-error, and run-error text is
 localized by the backend rather than forwarding arbitrary agent text. The emitted frontend event
 vocabulary is limited to the seven event types frozen in `api/openapi.yaml`.
+
+Agent route content rejects unknown fields, invalid types, invalid confidence values, duplicate
+orders/references, unsafe datetime forms, and oversized text/list/aggregate payloads. Content is
+returned as plain strings and lists; the backend does not treat it as HTML or verify its factual
+truth. The current runtime does not support a `route_preview` event.
 
 Agent HTTP calls and SSE reads execute without an open SQLAlchemy session. Run payload loading,
 agent mapping, each semantic event, terminal-state handling, and failure handling use separate
@@ -79,7 +91,8 @@ The automated suite verifies route registration and authentication boundaries, r
 refresh rotation/replay, ticket hashing/scope/replay/expiry, persisted SSE reconnect, Contract A
 error handling, event normalization, plan persistence gating, deterministic seed import, read-only
 internal calls, business constraints, localization fallback, migration upgrades, process-isolated
-test databases, and placeholder-only example secrets.
+test databases, rich route-content validation and serialization, private calendar-link resolution,
+and placeholder-only example secrets.
 
 ## Development
 

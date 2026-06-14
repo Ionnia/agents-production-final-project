@@ -2,9 +2,8 @@
 
 ## Frozen-contract interpretations
 
-- The status text in the frozen `api/SPECIFICATION.md` still says the contract is not implemented.
-  Per the task constraint, that frozen module was not edited; the root and backend specifications
-  record the current implementation status.
+- The frontend OpenAPI remains backward-compatible: the existing `MapPoint` schema gained only
+  optional rich-content fields. No endpoint, required property, or SSE event name changed.
 - The frontend stream ticket is single-use for its first connection. After consumption it remains
   valid only for reconnects to the same run during a five-minute lease, allowing browser
   `EventSource` reconnection with `Last-Event-ID`.
@@ -33,6 +32,18 @@
   run and plan failure text uses the locale stored in the run payload.
 - Stream tickets are checked against both the requested run and the run owner before first
   consumption; a mismatched stored owner cannot open or consume the ticket.
+- Rich map fields are optional flat `MapPoint` properties for backward compatibility. Validated
+  extensions are stored in `plan_map_points.details`; core coordinates and ordering remain normal
+  columns. This avoids a wide MVP table while keeping one canonical serializer.
+- `description` is accepted only as a compatibility alias of `summary`. The backend emits equal
+  values for both when a summary exists and never synthesizes other place content.
+- Agent `calendar_event_ref` and calendar `route_ref` are private draft correlation values. They
+  are resolved to a backend-owned `calendar_event_id` and are not persisted as public metadata.
+- Oversized or malformed rich content rejects the complete plan rather than being silently
+  truncated. The backend validates structure and provenance markers but cannot establish factual
+  correctness.
+- `route_preview` remains documentation-only until both frozen SSE contracts receive a separately
+  approved event extension.
 
 ## Runtime
 

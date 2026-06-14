@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -23,7 +22,7 @@ from ..models import (
     utcnow,
 )
 from ..schemas import AgentDraftPlan
-from .serializers import clean, iso
+from .serializers import iso, map_point_dict
 from .validation import validate_selection
 
 TERMINAL_STATUSES = {"completed", "cancelled", "error"}
@@ -199,13 +198,6 @@ async def get_group(db: AsyncSession, group_id: str | None) -> TravelGroup | Non
     )
 
 
-def parse_datetime(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
-
-
 async def persist_draft(
     db: AsyncSession, run: Run, raw_plan: dict[str, Any]
 ) -> tuple[Plan, dict[str, Any]]:
@@ -248,74 +240,51 @@ async def persist_draft(
     plan.tour_id = draft.selections.tour_id
     plan.summary = draft.decision_rationale or "Готовый план поездки"
 
+    calendar_event_ids: dict[str, str] = {}
+    for source in draft.calendar_events:
+        event = PlanCalendarEvent(
+            plan_id=plan.id,
+            type=source.type,
+            title=source.title,
+            start=source.start,
+            end=source.end,
+            location=source.location,
+            ref_id=source.ref_id,
+            notes=source.notes,
+        )
+        db.add(event)
+        await db.flush()
+        if source.route_ref:
+            calendar_event_ids[source.route_ref] = event.id
+
     points_payload = []
-    for index, source in enumerate(draft.map_points):
-        try:
-            name = str(source["name"])
-            kind = source["kind"]
-            lat = float(source["lat"])
-            lng = float(source["lng"])
-            order = int(source.get("order", index))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise APIError(
-                422,
-                "validation_error",
-                details={"source": "agent_map_point", "index": index},
-            ) from exc
-        if kind not in {"origin", "destination", "stop"}:
-            raise APIError(422, "validation_error", details={"source": "agent_map_point_kind"})
-        if not -90 <= lat <= 90 or not -180 <= lng <= 180:
-            raise APIError(422, "validation_error", details={"source": "agent_map_coordinates"})
+    for index, source in enumerate(sorted(draft.map_points, key=lambda item: item.order)):
+        calendar_event_id = None
+        if source.calendar_event_ref:
+            calendar_event_id = calendar_event_ids.get(source.calendar_event_ref)
+            if calendar_event_id is None:
+                raise APIError(
+                    422,
+                    "validation_error",
+                    details={
+                        "source": "agent_map_calendar_link",
+                        "index": index,
+                    },
+                )
+        details = source.public_details(calendar_event_id)
         point = PlanMapPoint(
             plan_id=plan.id,
-            name=name,
-            kind=kind,
-            lat=lat,
-            lng=lng,
-            order=order,
-            note=source.get("note"),
+            name=source.name,
+            kind=source.kind,
+            lat=source.lat,
+            lng=source.lng,
+            order=source.order,
+            note=source.note,
+            details=details or None,
         )
         db.add(point)
         await db.flush()
-        points_payload.append(
-            clean(
-                {
-                    "id": point.id,
-                    "name": point.name,
-                    "kind": point.kind,
-                    "lat": point.lat,
-                    "lng": point.lng,
-                    "order": point.order,
-                    "note": point.note,
-                }
-            )
-        )
-
-    for index, source in enumerate(draft.calendar_events):
-        try:
-            event_type = source["type"]
-            title = source["title"]
-            start = parse_datetime(source["start"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise APIError(
-                422,
-                "validation_error",
-                details={"source": "agent_calendar_event", "index": index},
-            ) from exc
-        if event_type not in {"flight", "hotel", "tour", "activity"}:
-            raise APIError(422, "validation_error", details={"source": "agent_calendar_type"})
-        db.add(
-            PlanCalendarEvent(
-                plan_id=plan.id,
-                type=event_type,
-                title=title,
-                start=start,
-                end=parse_datetime(source["end"]) if source.get("end") else None,
-                location=source.get("location"),
-                ref_id=source.get("ref_id"),
-                notes=source.get("notes"),
-            )
-        )
+        points_payload.append(map_point_dict(point))
 
     plan_message = Message(
         session_id=run.session_id,

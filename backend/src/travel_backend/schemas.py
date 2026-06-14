@@ -1,7 +1,8 @@
-from datetime import date
+import json
+from datetime import date, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class APIModel(BaseModel):
@@ -144,16 +145,157 @@ class ValidatePlanRequest(APIModel):
     constraints: dict[str, Any] = Field(default_factory=dict)
 
 
+ContentConfidence = Literal["low", "medium", "high"]
+
+
+class AgentMapPoint(APIModel):
+    name: str = Field(min_length=1, max_length=200)
+    kind: Literal["origin", "destination", "stop"]
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    order: int = Field(ge=0)
+    note: str | None = Field(default=None, max_length=2000)
+    description: str | None = Field(default=None, max_length=1000)
+    summary: str | None = Field(default=None, max_length=1000)
+    visit_date: date | None = None
+    visit_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    visit_start: datetime | None = None
+    visit_end: datetime | None = None
+    duration_minutes: int | None = Field(default=None, ge=0, le=10080)
+    cost_rub: int | None = Field(default=None, ge=0)
+    price_note: str | None = Field(default=None, max_length=1000)
+    calendar_event_ref: str | None = Field(default=None, min_length=1, max_length=200)
+    ref_id: str | None = Field(default=None, max_length=200)
+    transport_to_next: str | None = Field(default=None, max_length=1000)
+    travel_time_to_next_minutes: int | None = Field(default=None, ge=0, le=10080)
+    distance_to_next_km: float | None = Field(default=None, ge=0, le=50000)
+    historical_background: str | None = Field(default=None, max_length=4000)
+    interesting_facts: list[str] = Field(default_factory=list, max_length=20)
+    visit_tips: list[str] = Field(default_factory=list, max_length=20)
+    food_recommendations: list[str] = Field(default_factory=list, max_length=20)
+    signature_dishes: list[str] = Field(default_factory=list, max_length=20)
+    average_check_rub: int | None = Field(default=None, ge=0)
+    booking_advice: str | None = Field(default=None, max_length=2000)
+    accessibility_notes: str | None = Field(default=None, max_length=2000)
+    safety_notes: str | None = Field(default=None, max_length=2000)
+    weather_notes: str | None = Field(default=None, max_length=2000)
+    why_recommended: str | None = Field(default=None, max_length=2000)
+    content_source: str | None = Field(
+        default=None,
+        max_length=100,
+        pattern=r"^[a-z][a-z0-9_:-]*$",
+    )
+    content_confidence: ContentConfidence | None = None
+
+    @field_validator(
+        "interesting_facts",
+        "visit_tips",
+        "food_recommendations",
+        "signature_dishes",
+    )
+    @classmethod
+    def validate_short_items(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 500 for item in value):
+            raise ValueError("list items must contain 1 to 500 characters")
+        return value
+
+    @field_validator("visit_time")
+    @classmethod
+    def validate_visit_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        hour, minute = (int(part) for part in value.split(":"))
+        if hour > 23 or minute > 59:
+            raise ValueError("visit_time must be a valid HH:MM value")
+        return value
+
+    @field_validator("visit_start", "visit_end")
+    @classmethod
+    def require_visit_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("visit datetimes must include a timezone offset")
+        return value
+
+    @model_validator(mode="after")
+    def normalize_description(self) -> "AgentMapPoint":
+        if self.summary is not None and self.description is not None:
+            if self.summary != self.description:
+                raise ValueError("description and summary must match when both are provided")
+        elif self.summary is None:
+            self.summary = self.description
+        self.description = self.summary
+        if self.visit_start and self.visit_end and self.visit_end < self.visit_start:
+            raise ValueError("visit_end must not be before visit_start")
+        return self
+
+    def public_details(self, calendar_event_id: str | None = None) -> dict[str, Any]:
+        excluded = {"name", "kind", "lat", "lng", "order", "note", "calendar_event_ref"}
+        details = self.model_dump(mode="json", exclude_none=True, exclude=excluded)
+        if self.summary is not None:
+            details["description"] = self.summary
+        if calendar_event_id is not None:
+            details["calendar_event_id"] = calendar_event_id
+        return {key: value for key, value in details.items() if value != []}
+
+
+class AgentCalendarEvent(APIModel):
+    type: Literal["flight", "hotel", "tour", "activity"]
+    title: str = Field(min_length=1, max_length=300)
+    start: datetime
+    end: datetime | None = None
+    location: str | None = Field(default=None, max_length=300)
+    ref_id: str | None = Field(default=None, max_length=200)
+    notes: str | None = Field(default=None, max_length=2000)
+    route_ref: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @field_validator("start", "end")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("calendar datetimes must include a timezone offset")
+        return value
+
+    @model_validator(mode="after")
+    def valid_interval(self) -> "AgentCalendarEvent":
+        if self.end and self.end < self.start:
+            raise ValueError("end must not be before start")
+        return self
+
+
 class AgentDraftPlan(APIModel):
-    destination: str | None = None
+    destination: str | None = Field(default=None, max_length=120)
     start_date: date | None = None
     end_date: date | None = None
     selections: PlanSelectionForValidation
-    estimated_total_rub: int | None = None
-    decision_rationale: str | None = None
-    map_points: list[dict[str, Any]]
-    calendar_events: list[dict[str, Any]] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
+    estimated_total_rub: int | None = Field(default=None, ge=0)
+    decision_rationale: str | None = Field(default=None, max_length=10000)
+    map_points: list[AgentMapPoint] = Field(max_length=100)
+    calendar_events: list[AgentCalendarEvent] = Field(default_factory=list, max_length=200)
+    warnings: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("warnings")
+    @classmethod
+    def validate_warnings(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 500 for item in value):
+            raise ValueError("warnings must contain 1 to 500 characters")
+        return value
+
+    @model_validator(mode="after")
+    def validate_route(self) -> "AgentDraftPlan":
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("end_date must not be before start_date")
+        orders = [point.order for point in self.map_points]
+        if len(orders) != len(set(orders)):
+            raise ValueError("map point order values must be unique")
+        route_refs = [event.route_ref for event in self.calendar_events if event.route_ref]
+        if len(route_refs) != len(set(route_refs)):
+            raise ValueError("calendar route_ref values must be unique")
+        payload_size = len(
+            json.dumps(self.model_dump(mode="json"), ensure_ascii=False).encode("utf-8")
+        )
+        if payload_size > 1_000_000:
+            raise ValueError("agent plan payload must not exceed 1 MB")
+        return self
 
 
 class AgentEvent(APIModel):
