@@ -26,8 +26,13 @@
   without maintaining duplicate re-export modules. Runtime logic lives in `src/travel_backend/`.
 - Agent message IDs are untrusted correlation values. Persisted messages always receive a local
   UUID; `agent_message_id` is private storage metadata and is not part of the frontend contract.
+  The first streamed delta creates the local message mapping, and its UUID is reused by later
+  deltas and the final message event.
 - Backend-only upstream failures (`timeout`, `agent_unavailable`) remain available in SSE run
-  errors, while frontend HTTP responses normalize them to the frozen `internal` code.
+  errors, while frontend HTTP responses normalize them to the frozen `internal` code. Persisted
+  run and plan failure text uses the locale stored in the run payload.
+- Stream tickets are checked against both the requested run and the run owner before first
+  consumption; a mismatched stored owner cannot open or consume the ticket.
 
 ## Runtime
 

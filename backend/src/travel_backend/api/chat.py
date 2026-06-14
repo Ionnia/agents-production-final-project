@@ -168,6 +168,11 @@ async def stream_run(
         )
         if entity is None:
             raise APIError(401, "unauthorized")
+        run = await db.get(Run, run_id)
+        if run is None:
+            raise APIError(404, "not_found")
+        if entity.user_id != run.user_id:
+            raise APIError(401, "unauthorized")
         now = utcnow()
         expires_at = entity.expires_at
         if expires_at.tzinfo is None:
