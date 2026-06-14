@@ -43,8 +43,12 @@ async function submit() {
 h1 { margin: 0 0 6px; font-size: 24px; color: #1c150f; }
 .f { padding: 12px 14px; border: none; border-radius: 12px; background: rgba(255,255,255,.45); color: var(--ink); font: inherit; }
 .f::placeholder { color: var(--ink-soft); }
-.submit { margin-top: 4px; padding: 12px; border: none; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
-.submit:disabled { opacity: .6; }
+.submit { margin-top: 4px; padding: 12px; border: none; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; transition: var(--tap); }
+@media (hover: hover) { .submit:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--accent-glow); } }
+.submit:not(:disabled):active { transform: translateY(0) scale(.97); filter: brightness(.95); box-shadow: var(--accent-glow-press); }
+.submit:disabled { opacity: .6; transform: none; }
 .alt { font-size: 13px; color: var(--ink-soft); text-align: center; margin: 4px 0 0; }
-.alt .link { padding: 0; border: none; background: none; font: inherit; color: var(--accent-press); font-weight: 600; cursor: pointer; }
+.alt .link { padding: 0; border: none; background: none; font: inherit; color: var(--accent-press); font-weight: 600; cursor: pointer; transition: var(--tap); }
+@media (hover: hover) { .alt .link:hover { filter: brightness(1.08); text-decoration: underline; } }
+.alt .link:active { filter: brightness(.9); }
 </style>

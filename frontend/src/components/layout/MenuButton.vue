@@ -5,6 +5,8 @@
   </button>
 </template>
 <style scoped>
-.menu { position: fixed; top: 20px; left: 20px; z-index: 30; width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; cursor: pointer; border: none; }
+.menu { position: fixed; top: 20px; left: 20px; z-index: 30; width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; cursor: pointer; border: none; transition: var(--tap); }
+@media (hover: hover) { .menu:hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: 0 10px 26px rgba(0,0,0,.28); } }
+.menu:active { transform: translateY(0) scale(.95); filter: brightness(.97); }
 .menu svg { width: 20px; height: 20px; }
 </style>

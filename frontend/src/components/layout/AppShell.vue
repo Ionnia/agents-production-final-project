@@ -9,7 +9,7 @@ const panelOpen = ref(false)
 
 <template>
   <DitheredBackground />
-  <MenuButton @toggle="panelOpen = !panelOpen" />
+  <MenuButton v-show="!panelOpen" @toggle="panelOpen = !panelOpen" />
   <SidePanel :open="panelOpen" @close="panelOpen = false" />
   <main class="pane"><slot /></main>
   <ToastHost />

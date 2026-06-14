@@ -5,11 +5,17 @@
   --ink: #241c14;                 /* text on frosted glass */
   --ink-soft: rgba(40, 30, 20, 0.55);
 
-  /* locked glass spec: white 30% · blur 7px · saturate 100% · no border */
-  --glass-bg: rgba(255, 255, 255, 0.30);
-  --glass-blur: 7px;
+  /* locked glass spec: white 38% · blur 10px · saturate 100% · no border */
+  --glass-bg: rgba(255, 255, 255, 0.38);
+  --glass-blur: 10px;
   --glass-saturate: 1;
   --glass-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+
+  /* interaction language: shared easing, transition, and accent glows */
+  --ease: cubic-bezier(.4, 0, .2, 1);
+  --tap: transform .14s var(--ease), box-shadow .22s var(--ease), filter .22s var(--ease), background-color .2s var(--ease), color .2s var(--ease);
+  --accent-glow: 0 6px 18px color-mix(in srgb, var(--accent) 42%, transparent);
+  --accent-glow-press: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .glass {

@@ -35,6 +35,8 @@ function fire() { if (props.busy) return; const t = model.value.trim(); if (t) {
 .field { flex: 1; resize: none; border: none; background: transparent; color: var(--ink); font: inherit; font-size: 16px; outline: none; padding: 8px; max-height: 160px; }
 .field::placeholder { color: var(--ink-soft); }
 .send { width: 40px; height: 40px; flex: none; border-radius: 50%; border: none; cursor: pointer; color: #fff; font-size: 18px;
-  background: linear-gradient(160deg, #e2825f, var(--accent-press)); }
-.send:disabled { opacity: .5; cursor: default; }
+  background: linear-gradient(160deg, var(--accent), var(--accent-press)); transition: var(--tap); }
+@media (hover: hover) { .send:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--accent-glow); } }
+.send:not(:disabled):active { transform: translateY(0) scale(.97); filter: brightness(.95); box-shadow: var(--accent-glow-press); }
+.send:disabled { opacity: .5; cursor: default; transform: none; }
 </style>

@@ -33,16 +33,17 @@ pnpm gen:api        # regenerate src/api/schema.d.ts from ../api/openapi.yaml
 
 - **Prerender script:** `scripts/prerender-backgrounds.mjs` — uses `@napi-rs/canvas` to render 8 travel scenes (france, greece, italy, japan, china, india, russia, usa) as dithered images.
 - **Output:** `public/backgrounds/<scene>-mono.webp` (grayscale dithered) and `<scene>-color.webp` (full-color dithered). 16 files total, served as static assets.
-- **Component:** `src/components/background/DitheredBackground.vue` — picks a random scene on each load, stacks the two layers; the color layer is masked with a CSS radial-gradient (lens) whose position/size is driven by CSS custom properties (`--mpx`, `--mpy`, `--d`).
+- **Component:** `src/components/background/DitheredBackground.vue` — picks a random scene on each load, stacks the two layers; the color layer is masked with a CSS radial-gradient (lens) whose position/size is driven by CSS custom properties (`--mpx`, `--mpy`, `--d`). On mount it also sets the global `--accent` / `--accent-press` tokens from a per-scene `ACCENTS` map (china=jade, russia=blue, usa=dark blue, india=soft pink, japan=reddish pink, italy=terracotta, france=goldish yellow, greece=Aegean blue), so all accent-tinted UI (buttons, user bubbles, map route, links) matches the active background.
 - **Cursor lens composable:** `src/composables/useCursorLens.ts` — listens to `pointermove`, writes `--mpx`/`--mpy`/`--d` onto the color `<img>` element once per `requestAnimationFrame`. `lensVars(x, y, r)` is pure and tested.
 
 ## 3. Glass design system
 
 Single token defined in `src/styles/glass.css`, imported by `src/style.css`:
 
-- `.glass` — `background: rgba(255,255,255,0.30)`, `backdrop-filter: blur(7px) saturate(1)`, `box-shadow: 0 18px 50px rgba(0,0,0,0.35)`. No border. This is the only frosted-glass surface variant.
+- `.glass` — `background: rgba(255,255,255,0.38)`, `backdrop-filter: blur(10px) saturate(1)`, `box-shadow: 0 18px 50px rgba(0,0,0,0.35)`. No border. This is the only frosted-glass surface variant.
 - `.glass-dark` — darker variant for toasts/controls that sit on light frost.
-- CSS custom properties: `--accent` (#d97757), `--accent-press` (#cf5f3f), `--bg-base` (#0c0a08), `--ink` (#241c14), `--ink-soft` (rgba(40,30,20,0.55)), plus the glass spec vars.
+- CSS custom properties: `--accent` / `--accent-press` (default terracotta #d97757 / #cf5f3f, overridden at runtime by `DitheredBackground` to match the active scene), `--bg-base` (#0c0a08), `--ink` (#241c14), `--ink-soft` (rgba(40,30,20,0.55)), plus the glass spec vars.
+- Interaction tokens: `--ease` (shared easing), `--tap` (the standard control transition), `--accent-glow` / `--accent-glow-press` (hover/pressed shadows, derived from `--accent` via `color-mix` so they follow the scene accent). All interactive controls use these for a uniform hover (lift + brightness + shadow) and pressed (`scale .97`) feel, guarded by `@media (hover: hover)` and `:not(:disabled)`.
 - Global `prefers-reduced-motion` rule collapses all animation and transition durations to 0.001 ms.
 
 ## 4. App entry and routing
@@ -62,9 +63,9 @@ The `beforeEach` guard lazily imports `useAuthStore`, calls `auth.restore()` on 
 
 ## 5. App shell and layout components
 
-- **`AppShell.vue`** — fixed full-screen chrome: `DitheredBackground` (z-index 0), `MenuButton` (top-left, z-index 10), `SidePanel` (z-index 25), `<main class="pane">` slot for `<RouterView>` (z-index 1), `ToastHost` (z-index 100).
+- **`AppShell.vue`** — fixed full-screen chrome: `DitheredBackground` (z-index 0), `MenuButton` (top-left, z-index 30, hidden via `v-show` while the panel is open), `SidePanel` (panel z-index 35 over a click-to-close scrim at z-index 30), `<main class="pane">` slot for `<RouterView>` (z-index 1), `ToastHost` (z-index 100).
 - **`MenuButton.vue`** — hamburger button; emits `toggle`.
-- **`SidePanel.vue`** — slides in from the left (transition `translateX(-104%)`); 308 px wide, full-width on ≤ 480 px (`border-radius: 0`). Contains: title, "New chat" button, search input, scrollable `SessionList` / `GroupList` / `PlanList`, logout button.
+- **`SidePanel.vue`** — slides in from the left (transition `translateX(-104%)`) above the menu button, over a dimmed scrim that closes the panel on click; 308 px wide, full-width on ≤ 480 px (`border-radius: 0`). Contains: header (title + ✕ close button), "New chat" button, search input, scrollable `SessionList` / `GroupList` / `PlanList`, logout button. Closes on ✕, scrim click, `Escape`, list navigation, new-chat, or logout.
 - **`SessionList.vue`**, **`GroupList.vue`**, **`PlanList.vue`** — list sub-components for the side panel; each pulls from its Pinia store and filters by the `filter` prop.
 
 ## 6. UI primitives
@@ -121,7 +122,7 @@ All files under `src/mocks/`:
 
 ### Chat (`src/components/chat/`)
 
-- **`ChatView.vue`** — route-level component. Hero state (composer centred at 48%, `Куда отправимся?` heading) transitions to chatting state (composer at bottom, message thread visible) when the first message is sent. Responsive: `font-size: 28px` for the heading and `width: 94%` for the thread on ≤ 600 px.
+- **`ChatView.vue`** — route-level component. Hero state (composer centred at 48%, `Куда отправимся?` heading) transitions to chatting state (composer at bottom, message thread visible) when the first message is sent. The `sessionId` watcher skips re-hydration when the route param already matches the live store session, so live state (e.g. a pending clarifying question) survives the `router.replace` after the first message. Responsive: `font-size: 28px` for the heading and `width: 94%` for the thread on ≤ 600 px.
 - **`ChatComposer.vue`** — textarea with auto-grow and send button; emits `submit(text)`.
 - **`MessageList.vue`** — scrollable list; renders `MessageBubble` per message, `ClarifyingQuestion` when `question` prop is set, `PlanStatus` when `planStatus` is set.
 - **`MessageBubble.vue`** — user/assistant bubble with optional `plan_ref` link to the plan view.
@@ -174,7 +175,7 @@ frontend/
     main.ts                            Bootstrap: MSW → Pinia → Router → mount
     style.css                          Tailwind import + glass.css import + base resets
     App.vue                            Thin shell: <AppShell><RouterView /></AppShell>
-    styles/glass.css                   .glass token + .glass-dark + CSS vars + reduced-motion
+    styles/glass.css                   .glass token + .glass-dark + CSS vars + interaction tokens + reduced-motion
     router/index.ts                    Routes + beforeEach auth guard
     api/
       schema.d.ts                      GENERATED — do not edit

@@ -26,10 +26,15 @@ async function submit() { const runId = await plans.modify(props.planId); emit('
 .bar { padding: 14px; border-radius: 14px; display: flex; flex-direction: column; gap: 8px; }
 .row { display: flex; gap: 8px; }
 .in { flex: 1; padding: 9px 12px; border: none; border-radius: 10px; background: rgba(255,255,255,.4); color: var(--ink); }
-.add { width: 38px; border: none; border-radius: 10px; background: var(--accent); color: #fff; cursor: pointer; }
+.add { width: 38px; border: none; border-radius: 10px; background: var(--accent); color: #fff; cursor: pointer; transition: var(--tap); }
+@media (hover: hover) { .add:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--accent-glow); } }
+.add:not(:disabled):active { transform: translateY(0) scale(.97); filter: brightness(.95); box-shadow: var(--accent-glow-press); }
+.add:disabled { transform: none; }
 .staged { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { font-size: 12px; padding: 4px 9px; border-radius: 999px; background: rgba(217,119,87,.18); color: var(--accent-press); }
 .note { margin: 0; font-size: 12px; color: var(--ink-soft); }
-.rebuild { padding: 10px; border: none; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
-.rebuild:disabled { opacity: .5; cursor: default; }
+.rebuild { padding: 10px; border: none; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; transition: var(--tap); }
+@media (hover: hover) { .rebuild:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--accent-glow); } }
+.rebuild:not(:disabled):active { transform: translateY(0) scale(.97); filter: brightness(.95); box-shadow: var(--accent-glow-press); }
+.rebuild:disabled { opacity: .5; cursor: default; transform: none; }
 </style>

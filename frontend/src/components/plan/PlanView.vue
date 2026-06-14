@@ -73,8 +73,10 @@ async function onRebuild() {
 
 <style scoped>
 .plan { position: fixed; inset: 0; overflow: auto; padding: 76px 22px 26px; }
-.top { position: fixed; top: 18px; left: 76px; right: 22px; z-index: 5; display: flex; align-items: center; gap: 14px; }
-.back { width: 40px; height: 40px; border: none; border-radius: 12px; cursor: pointer; }
+.top { position: fixed; top: 20px; left: 76px; right: 22px; z-index: 5; display: flex; align-items: center; gap: 14px; }
+.back { width: 44px; height: 44px; flex: none; border: none; border-radius: 14px; cursor: pointer; display: grid; place-items: center; font-size: 18px; transition: var(--tap); }
+@media (hover: hover) { .back:hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: 0 10px 26px rgba(0,0,0,.28); } }
+.back:active { transform: translateY(0) scale(.95); filter: brightness(.97); }
 .ti { display: flex; align-items: baseline; gap: 12px; }
 h1 { margin: 0; font-size: 22px; color: #fff; text-shadow: 0 1px 12px rgba(0,0,0,.5); }
 .status { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,.25); color: #fff; }
@@ -82,7 +84,9 @@ h1 { margin: 0; font-size: 22px; color: #fff; text-shadow: 0 1px 12px rgba(0,0,0
 @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
 .left { border-radius: 18px; padding: 10px; display: flex; flex-direction: column; min-height: 60vh; }
 .tabs { display: flex; gap: 6px; padding: 4px; }
-.tabs button { flex: 1; padding: 8px; border: none; border-radius: 10px; background: transparent; color: var(--ink-soft); cursor: pointer; }
+.tabs button { flex: 1; padding: 8px; border: none; border-radius: 10px; background: transparent; color: var(--ink-soft); cursor: pointer; transition: var(--tap); }
+@media (hover: hover) { .tabs button:not(.on):hover { background: rgba(255,255,255,.22); color: var(--ink); } }
+.tabs button:active { transform: scale(.98); }
 .tabs button.on { background: rgba(255,255,255,.45); color: var(--ink); font-weight: 600; }
 .canvas { flex: 1; padding: 6px; min-height: 56vh; }
 .right { display: flex; flex-direction: column; gap: 12px; }
@@ -90,7 +94,11 @@ h1 { margin: 0; font-size: 22px; color: #fff; text-shadow: 0 1px 12px rgba(0,0,0
 .rat { margin: 0 0 10px; color: var(--ink); font-size: 14px; }
 .total { color: var(--ink); } .total b { color: var(--accent-press); }
 .actions { display: flex; gap: 10px; }
-.accept { flex: 1; padding: 12px; border: none; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
-.accept:disabled { opacity: .5; cursor: default; }
-.reject { padding: 12px 16px; border: none; border-radius: 12px; background: rgba(0,0,0,.12); color: var(--ink); cursor: pointer; }
+.accept { flex: 1; padding: 12px; border: none; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; transition: var(--tap); }
+@media (hover: hover) { .accept:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--accent-glow); } }
+.accept:not(:disabled):active { transform: translateY(0) scale(.97); filter: brightness(.95); box-shadow: var(--accent-glow-press); }
+.accept:disabled { opacity: .5; cursor: default; transform: none; }
+.reject { padding: 12px 16px; border: none; border-radius: 12px; background: rgba(0,0,0,.12); color: var(--ink); cursor: pointer; transition: var(--tap); }
+@media (hover: hover) { .reject:hover { background: rgba(0,0,0,.18); transform: translateY(-1px); } }
+.reject:active { transform: translateY(0) scale(.97); }
 </style>

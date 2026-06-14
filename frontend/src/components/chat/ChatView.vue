@@ -17,6 +17,10 @@ onMounted(async () => {
   else chat.reset()
 })
 watch(() => props.sessionId, async (id) => {
+  // Skip when the route just caught up to the session we already have live in the
+  // store (e.g. router.replace after the first message) — re-hydrating from the
+  // server here would clobber live state such as the pending clarifying question.
+  if (id === chat.sessionId) return
   if (id) { await sessions.loadDetail(id); if (sessions.current) chat.hydrate(sessions.current.id, sessions.current.messages) }
   else chat.reset()
 })
@@ -58,8 +62,9 @@ function onAnswer(optionIds: string[], freeform?: string) {
 <style scoped>
 .chat { position: fixed; inset: 0; }
 .hero { position: absolute; left: 0; right: 0; top: 31%; text-align: center; }
-.hero h1 { font-size: 38px; font-weight: 600; letter-spacing: -.8px; margin: 0; color: #fff; text-shadow: 0 2px 30px rgba(0,0,0,.6); }
-.hero p { color: #e7ddcf; margin: 10px 0 0; text-shadow: 0 1px 14px rgba(0,0,0,.6); }
+.hero h1 { font-size: 38px; font-weight: 600; letter-spacing: -.8px; margin: 0; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,.85), 0 4px 18px rgba(0,0,0,.7), 0 8px 40px rgba(0,0,0,.6); }
+.hero p { position: relative; isolation: isolate; width: fit-content; max-width: 94vw; margin: 12px auto 0; color: #e7ddcf; text-shadow: 0 1px 4px rgba(0,0,0,.7); }
+.hero p::before { content: ""; position: absolute; inset: -.5em -1em; z-index: -1; pointer-events: none; background: radial-gradient(ellipse at center, rgba(0,0,0,.55) 0%, rgba(0,0,0,.36) 50%, rgba(0,0,0,0) 78%); filter: blur(11px); }
 .thread { position: absolute; left: 50%; transform: translateX(-50%); top: 78px; bottom: 110px; width: min(720px, 92%); }
 .composer-slot { position: absolute; left: 50%; transform: translateX(-50%); top: 48%; display: flex; justify-content: center; width: 100%;
   transition: top .6s cubic-bezier(.55,.06,.12,1); }
