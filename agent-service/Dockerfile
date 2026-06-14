@@ -12,15 +12,15 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app/agent-service
 
-# 1) Dependencies incl. the [llm] reasoning core (langchain/langgraph/gigachat/chroma).
-#    No committed lock for agent-service -> resolve at build time.
-COPY agent-service/pyproject.toml ./
-RUN uv sync --extra llm --no-install-project
+# 1) Dependencies incl. the [llm] reasoning core (langchain/langgraph/gigachat/chroma),
+#    pinned by the committed lock for reproducible builds.
+COPY agent-service/pyproject.toml agent-service/uv.lock ./
+RUN uv sync --frozen --extra llm --no-install-project
 
 # 2) Service source + the Final-agent runtime it imports from ../agent
 COPY agent-service/ /app/agent-service/
 COPY agent/ /app/agent/
-RUN uv sync --extra llm \
+RUN uv sync --frozen --extra llm \
     && chmod +x docker-entrypoint.sh
 
 EXPOSE 8001
