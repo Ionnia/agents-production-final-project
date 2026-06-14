@@ -120,6 +120,10 @@ required before startup; runtime seed reconciliation repairs only backend-owned 
 - **IDs:** opaque strings — UUIDs for new entities; seeded groups keep `G-0001`-style ids.
 - **Specs stay in sync with code** ([`AGENTS.md`](./AGENTS.md)): update the relevant module
   `SPECIFICATION.md` (and this root index) in the same change that touches the code.
+- **Route-content hand-off:** [`docs/FRONTEND_EXPECTATIONS.md`](./docs/FRONTEND_EXPECTATIONS.md)
+  defines future map/card consumption, while
+  [`docs/AGENT_ROUTE_CONTENT_EXPECTATIONS.md`](./docs/AGENT_ROUTE_CONTENT_EXPECTATIONS.md) defines
+  the untrusted structured place content expected from the future Agent Service.
 
 ## 4. Design history
 

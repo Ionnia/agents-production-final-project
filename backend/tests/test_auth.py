@@ -1,5 +1,7 @@
+import asyncio
+
 from conftest import register_user
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from travel_backend.database import SessionFactory
 from travel_backend.models import RefreshToken, User
@@ -46,3 +48,30 @@ async def test_login_logout_me_and_unauthenticated_access(client, unique_email):
         json={"refresh_token": refresh},
     )
     assert rejected.status_code == 401
+
+
+async def test_refresh_rotation_is_atomic_under_concurrency(client, unique_email):
+    registered, _ = await register_user(client, unique_email)
+    refresh_token = registered["tokens"]["refresh_token"]
+
+    responses = await asyncio.gather(
+        client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token}),
+        client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token}),
+    )
+
+    assert sorted(response.status_code for response in responses) == [200, 401]
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        total = await db.scalar(
+            select(func.count()).select_from(RefreshToken).where(RefreshToken.user_id == user.id)
+        )
+        active = await db.scalar(
+            select(func.count())
+            .select_from(RefreshToken)
+            .where(
+                RefreshToken.user_id == user.id,
+                RefreshToken.revoked_at.is_(None),
+            )
+        )
+    assert total == 2
+    assert active == 1

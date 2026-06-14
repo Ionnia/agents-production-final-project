@@ -1,7 +1,6 @@
-from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,7 +22,7 @@ from ..models import (
     utcnow,
 )
 from ..schemas import AgentDraftPlan
-from .serializers import clean, iso
+from .serializers import iso, map_point_dict
 from .validation import validate_selection
 
 TERMINAL_STATUSES = {"completed", "cancelled", "error"}
@@ -98,12 +97,15 @@ def validate_agent_event(run: Run, event_name: str, data: dict[str, Any]) -> Non
             not isinstance(source, dict)
             or source.get("role") != "assistant"
             or not isinstance(source.get("id"), str)
+            or len(source["id"]) > 200
             or not isinstance(source.get("content"), str)
         ):
             raise APIError(422, "validation_error", details={"source": "agent_message"})
     if event_name == "message_delta" and not all(
         isinstance(data.get(key), str) for key in ("message_id", "delta")
     ):
+        raise APIError(422, "validation_error", details={"source": "agent_message_delta"})
+    if event_name == "message_delta" and len(data["message_id"]) > 200:
         raise APIError(422, "validation_error", details={"source": "agent_message_delta"})
     if event_name == "clarifying_question":
         question = data["question"]
@@ -152,16 +154,40 @@ def validate_agent_event(run: Run, event_name: str, data: dict[str, Any]) -> Non
 async def append_event(
     db: AsyncSession, run_id: str, event_name: str, payload: dict[str, Any]
 ) -> RunEvent:
-    current = await db.scalar(select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run_id))
+    sequence = await db.scalar(
+        update(Run)
+        .where(Run.id == run_id)
+        .values(event_sequence=Run.event_sequence + 1)
+        .returning(Run.event_sequence)
+        .execution_options(synchronize_session=False)
+    )
+    if sequence is None:
+        raise APIError(404, "not_found")
     event = RunEvent(
         run_id=run_id,
-        sequence=(current or 0) + 1,
+        sequence=sequence,
         event_name=event_name,
         payload=payload,
     )
     db.add(event)
     await db.flush()
     return event
+
+
+async def claim_active_run(db: AsyncSession, run_id: str) -> bool:
+    claimed = await db.execute(
+        update(Run)
+        .where(
+            Run.id == run_id,
+            Run.status.not_in(TERMINAL_STATUSES),
+        )
+        .values(event_sequence=Run.event_sequence)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount == 1:
+        return True
+    await db.rollback()
+    return False
 
 
 async def ensure_plan(db: AsyncSession, run: Run) -> Plan:
@@ -197,13 +223,6 @@ async def get_group(db: AsyncSession, group_id: str | None) -> TravelGroup | Non
         .where(TravelGroup.id == group_id)
         .options(selectinload(TravelGroup.members).selectinload(GroupMember.preferences))
     )
-
-
-def parse_datetime(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
 
 
 async def persist_draft(
@@ -246,82 +265,60 @@ async def persist_draft(
     plan.flight_id = draft.selections.flight_id
     plan.hotel_id = draft.selections.hotel_id
     plan.tour_id = draft.selections.tour_id
-    plan.summary = draft.decision_rationale or "Готовый план поездки"
+    locale = run_locale(run)
+    plan.summary = draft.decision_rationale or message("ready_plan_summary", locale)
+
+    calendar_event_ids: dict[str, str] = {}
+    for source in draft.calendar_events:
+        event = PlanCalendarEvent(
+            plan_id=plan.id,
+            type=source.type,
+            title=source.title,
+            start=source.start,
+            end=source.end,
+            location=source.location,
+            ref_id=source.ref_id,
+            notes=source.notes,
+        )
+        db.add(event)
+        await db.flush()
+        if source.route_ref:
+            calendar_event_ids[source.route_ref] = event.id
 
     points_payload = []
-    for index, source in enumerate(draft.map_points):
-        try:
-            name = str(source["name"])
-            kind = source["kind"]
-            lat = float(source["lat"])
-            lng = float(source["lng"])
-            order = int(source.get("order", index))
-        except (KeyError, TypeError, ValueError) as exc:
-            raise APIError(
-                422,
-                "validation_error",
-                details={"source": "agent_map_point", "index": index},
-            ) from exc
-        if kind not in {"origin", "destination", "stop"}:
-            raise APIError(422, "validation_error", details={"source": "agent_map_point_kind"})
-        if not -90 <= lat <= 90 or not -180 <= lng <= 180:
-            raise APIError(422, "validation_error", details={"source": "agent_map_coordinates"})
+    for index, source in enumerate(sorted(draft.map_points, key=lambda item: item.order)):
+        calendar_event_id = None
+        if source.calendar_event_ref:
+            calendar_event_id = calendar_event_ids.get(source.calendar_event_ref)
+            if calendar_event_id is None:
+                raise APIError(
+                    422,
+                    "validation_error",
+                    details={
+                        "source": "agent_map_calendar_link",
+                        "index": index,
+                    },
+                )
+        details = source.public_details(calendar_event_id)
         point = PlanMapPoint(
             plan_id=plan.id,
-            name=name,
-            kind=kind,
-            lat=lat,
-            lng=lng,
-            order=order,
-            note=source.get("note"),
+            name=source.name,
+            kind=source.kind,
+            lat=source.lat,
+            lng=source.lng,
+            order=source.order,
+            note=source.note,
+            details=details or None,
         )
         db.add(point)
         await db.flush()
-        points_payload.append(
-            clean(
-                {
-                    "id": point.id,
-                    "name": point.name,
-                    "kind": point.kind,
-                    "lat": point.lat,
-                    "lng": point.lng,
-                    "order": point.order,
-                    "note": point.note,
-                }
-            )
-        )
-
-    for index, source in enumerate(draft.calendar_events):
-        try:
-            event_type = source["type"]
-            title = source["title"]
-            start = parse_datetime(source["start"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise APIError(
-                422,
-                "validation_error",
-                details={"source": "agent_calendar_event", "index": index},
-            ) from exc
-        if event_type not in {"flight", "hotel", "tour", "activity"}:
-            raise APIError(422, "validation_error", details={"source": "agent_calendar_type"})
-        db.add(
-            PlanCalendarEvent(
-                plan_id=plan.id,
-                type=event_type,
-                title=title,
-                start=start,
-                end=parse_datetime(source["end"]) if source.get("end") else None,
-                location=source.get("location"),
-                ref_id=source.get("ref_id"),
-                notes=source.get("notes"),
-            )
-        )
+        points_payload.append(map_point_dict(point))
 
     plan_message = Message(
         session_id=run.session_id,
         run_id=run.id,
         role="assistant",
-        content="План поездки готов.",
+        content=message("plan_ready", locale),
         plan_ref={"plan_id": plan.id, "status": "ready"},
     )
     db.add(plan_message)
@@ -445,7 +442,19 @@ async def process_agent_event(
         source = data["message"]
         await save_assistant_message(db, run, source["content"], source.get("id"))
     elif event_name == "clarifying_question":
-        question = data["question"]
+        source = data["question"]
+        question = {
+            "id": source["id"],
+            "text": source["text"],
+            "options": [
+                {
+                    "id": option["id"],
+                    "label": option["label"],
+                }
+                for option in source["options"]
+            ],
+            "allow_freeform": source["allow_freeform"],
+        }
         entity = Message(
             session_id=run.session_id,
             run_id=run.id,
@@ -574,8 +583,10 @@ async def build_agent_payload(
 
 async def save_agent_mapping(run_id: str, created: CreatedRun) -> bool:
     async with SessionFactory() as db:
+        if not await claim_active_run(db, run_id):
+            return False
         run = await db.get(Run, run_id)
-        if run is None or run.status in TERMINAL_STATUSES:
+        if run is None:
             return False
         session = await db.get(ChatSession, run.session_id)
         run.agent_run_id = created.agent_run_id
@@ -591,8 +602,10 @@ async def save_agent_mapping(run_id: str, created: CreatedRun) -> bool:
 
 async def process_persisted_agent_event(run_id: str, event_name: str, data: dict[str, Any]) -> bool:
     async with SessionFactory() as db:
+        if not await claim_active_run(db, run_id):
+            return False
         run = await db.get(Run, run_id)
-        if run is None or run.status == "cancelled":
+        if run is None:
             return False
         await process_agent_event(db, run, event_name, data)
         await db.commit()
@@ -601,8 +614,10 @@ async def process_persisted_agent_event(run_id: str, event_name: str, data: dict
 
 async def fail_persisted_run(run_id: str, error: APIError) -> None:
     async with SessionFactory() as db:
+        if not await claim_active_run(db, run_id):
+            return
         run = await db.get(Run, run_id)
-        if run is None or run.status == "cancelled":
+        if run is None:
             return
         await fail_run(db, run, error)
         await db.commit()
@@ -610,8 +625,10 @@ async def fail_persisted_run(run_id: str, error: APIError) -> None:
 
 async def ensure_terminal_run(run_id: str) -> None:
     async with SessionFactory() as db:
+        if not await claim_active_run(db, run_id):
+            return
         run = await db.get(Run, run_id)
-        if run and run.status not in TERMINAL_STATUSES:
+        if run:
             await fail_run(db, run, APIError(502, "agent_unavailable"))
             await db.commit()
 

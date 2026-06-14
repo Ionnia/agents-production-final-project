@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from travel_backend.database import SessionFactory, engine
 from travel_backend.errors import APIError
 from travel_backend.models import ChatSession, Message, Plan, Run, RunEvent, User
 from travel_backend.schemas import AgentEvent
+from travel_backend.services.runs import process_persisted_agent_event
 
 
 class SuccessfulAgentClient:
@@ -167,6 +169,7 @@ class CancelAgentClient:
         self.settings = settings
 
     async def cancel(self, agent_run_id: str, correlation_id: str) -> None:
+        assert engine.pool.checkedout() == 0
         type(self).cancelled = (agent_run_id, correlation_id)
 
     async def close(self) -> None:
@@ -178,7 +181,20 @@ class FailingCancelAgentClient(CancelAgentClient):
     status_code = 504
 
     async def cancel(self, agent_run_id: str, correlation_id: str) -> None:
+        assert engine.pool.checkedout() == 0
         raise APIError(self.status_code, self.error_code, details={"upstream": "private"})
+
+
+class PausingCancelAgentClient(CancelAgentClient):
+    started: asyncio.Event | None = None
+    release: asyncio.Event | None = None
+
+    async def cancel(self, agent_run_id: str, correlation_id: str) -> None:
+        assert engine.pool.checkedout() == 0
+        assert self.started is not None
+        assert self.release is not None
+        self.started.set()
+        await self.release.wait()
 
 
 class SessionBoundaryAgentClient(SuccessfulAgentClient):
@@ -526,6 +542,84 @@ async def test_cancel_calls_agent_service_when_mapping_exists(
     assert CancelAgentClient.cancelled == (
         "agent-to-cancel",
         "cancel-correlation",
+    )
+
+
+async def test_cancel_orders_concurrent_agent_events_before_terminal_status(
+    client,
+    unique_email,
+    monkeypatch,
+):
+    PausingCancelAgentClient.started = asyncio.Event()
+    PausingCancelAgentClient.release = asyncio.Event()
+    monkeypatch.setattr(
+        "travel_backend.api.chat.AgentServiceClient",
+        PausingCancelAgentClient,
+    )
+    _, headers = await register_user(client, unique_email)
+    agent_run_id = f"agent-{uuid4()}"
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        session = ChatSession(user_id=user.id, summary="Concurrent cancellation")
+        db.add(session)
+        await db.flush()
+        run = Run(
+            session_id=session.id,
+            user_id=user.id,
+            correlation_id=str(uuid4()),
+            mode="qa",
+            status="running",
+            agent_run_id=agent_run_id,
+            input_payload={"message": "test"},
+        )
+        db.add(run)
+        await db.commit()
+        run_id = run.id
+
+    cancel_task = asyncio.create_task(client.post(f"/api/v1/chat/{run_id}/cancel", headers=headers))
+    await PausingCancelAgentClient.started.wait()
+    processed = await process_persisted_agent_event(
+        run_id,
+        "message",
+        {
+            "agent_run_id": agent_run_id,
+            "message": {
+                "id": "message-before-cancel",
+                "role": "assistant",
+                "content": "Before cancellation",
+            },
+        },
+    )
+    assert processed is True
+    PausingCancelAgentClient.release.set()
+    response = await cancel_task
+    assert response.status_code == 202
+
+    processed_after = await process_persisted_agent_event(
+        run_id,
+        "message",
+        {
+            "agent_run_id": agent_run_id,
+            "message": {
+                "id": "message-after-cancel",
+                "role": "assistant",
+                "content": "After cancellation",
+            },
+        },
+    )
+    assert processed_after is False
+    async with SessionFactory() as db:
+        run = await db.get(Run, run_id)
+        events = (
+            await db.scalars(
+                select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.sequence)
+            )
+        ).all()
+    assert run.status == "cancelled"
+    assert events[-1].event_name == "run_status"
+    assert events[-1].payload["status"] == "cancelled"
+    assert all(
+        event.payload.get("message", {}).get("content") != "After cancellation" for event in events
     )
 
 

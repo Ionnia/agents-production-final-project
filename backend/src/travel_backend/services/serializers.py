@@ -17,6 +17,38 @@ from ..models import (
     TravelGroup,
 )
 
+PUBLIC_MAP_DETAIL_FIELDS = frozenset(
+    {
+        "description",
+        "summary",
+        "visit_date",
+        "visit_time",
+        "visit_start",
+        "visit_end",
+        "duration_minutes",
+        "cost_rub",
+        "price_note",
+        "calendar_event_id",
+        "ref_id",
+        "transport_to_next",
+        "travel_time_to_next_minutes",
+        "distance_to_next_km",
+        "historical_background",
+        "interesting_facts",
+        "visit_tips",
+        "food_recommendations",
+        "signature_dishes",
+        "average_check_rub",
+        "booking_advice",
+        "accessibility_notes",
+        "safety_notes",
+        "weather_notes",
+        "why_recommended",
+        "content_source",
+        "content_confidence",
+    }
+)
+
 
 def iso(value: Any) -> str | None:
     if value is None:
@@ -129,6 +161,26 @@ def tour_dict(item: TourOffer) -> dict[str, Any]:
     )
 
 
+def map_point_dict(item: PlanMapPoint) -> dict[str, Any]:
+    public_details = (
+        {key: value for key, value in item.details.items() if key in PUBLIC_MAP_DETAIL_FIELDS}
+        if isinstance(item.details, dict)
+        else {}
+    )
+    return clean(
+        {
+            **public_details,
+            "id": item.id,
+            "name": item.name,
+            "kind": item.kind,
+            "lat": item.lat,
+            "lng": item.lng,
+            "order": item.order,
+            "note": item.note,
+        }
+    )
+
+
 async def plan_dict(db: AsyncSession, item: Plan) -> dict[str, Any]:
     flight = await db.get(FlightOffer, item.flight_id) if item.flight_id else None
     hotel = await db.get(HotelOffer, item.hotel_id) if item.hotel_id else None
@@ -163,20 +215,7 @@ async def plan_dict(db: AsyncSession, item: Plan) -> dict[str, Any]:
                     "tour": tour_dict(tour) if tour else None,
                 }
             ),
-            "map_points": [
-                clean(
-                    {
-                        "id": point.id,
-                        "name": point.name,
-                        "kind": point.kind,
-                        "lat": point.lat,
-                        "lng": point.lng,
-                        "order": point.order,
-                        "note": point.note,
-                    }
-                )
-                for point in points
-            ],
+            "map_points": [map_point_dict(point) for point in points],
             "created_at": iso(item.created_at),
             "updated_at": iso(item.updated_at),
         }

@@ -5,14 +5,14 @@ from secrets import token_urlsafe
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Header, Query, Request
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
 from ..clients.agent_service import AgentServiceClient
 from ..config import get_settings
 from ..database import SessionFactory
 from ..errors import APIError
-from ..i18n import choose_locale
+from ..i18n import choose_locale, message
 from ..models import (
     ChatSession,
     Message,
@@ -79,7 +79,9 @@ async def post_chat(
         if body.group_id:
             session.group_id = body.group_id
     else:
-        summary_source = body.message or body.freeform or "Ответ на уточняющий вопрос"
+        summary_source = (
+            body.message or body.freeform or message("clarifying_answer_summary", locale)
+        )
         session = ChatSession(
             user_id=user.id,
             group_id=body.group_id,
@@ -158,6 +160,12 @@ async def stream_run(
 ) -> EventSourceResponse:
     if not 20 <= len(ticket) <= 200:
         raise APIError(401, "unauthorized")
+    try:
+        start_sequence = int(last_event_id or 0)
+    except ValueError as exc:
+        raise APIError(422, "validation_error") from exc
+    if start_sequence < 0:
+        raise APIError(422, "validation_error")
     settings = get_settings()
     async with SessionFactory() as db:
         entity = await db.scalar(
@@ -174,27 +182,37 @@ async def stream_run(
         if entity.user_id != run.user_id:
             raise APIError(401, "unauthorized")
         now = utcnow()
-        expires_at = entity.expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=UTC)
         lease = entity.lease_expires_at
         if lease is not None and lease.tzinfo is None:
             lease = lease.replace(tzinfo=UTC)
         if entity.consumed_at is None:
-            if expires_at <= now:
-                raise APIError(401, "unauthorized")
-            entity.consumed_at = now
-            entity.lease_expires_at = now + timedelta(
-                seconds=settings.stream_reconnect_lease_seconds
+            ticket_id = entity.id
+            lease_expires_at = now + timedelta(seconds=settings.stream_reconnect_lease_seconds)
+            consumed = await db.execute(
+                update(StreamTicket)
+                .where(
+                    StreamTicket.id == entity.id,
+                    StreamTicket.consumed_at.is_(None),
+                    StreamTicket.expires_at > now,
+                )
+                .values(
+                    consumed_at=now,
+                    lease_expires_at=lease_expires_at,
+                )
+                .execution_options(synchronize_session=False)
             )
-            await db.commit()
+            if consumed.rowcount != 1:
+                await db.rollback()
+                entity = await db.get(StreamTicket, ticket_id)
+                lease = entity.lease_expires_at if entity else None
+                if lease is not None and lease.tzinfo is None:
+                    lease = lease.replace(tzinfo=UTC)
+                if entity is None or lease is None or lease <= now or not last_event_id:
+                    raise APIError(401, "unauthorized")
+            else:
+                await db.commit()
         elif lease is None or lease <= now or not last_event_id:
             raise APIError(401, "unauthorized")
-
-    try:
-        start_sequence = int(last_event_id or 0)
-    except ValueError as exc:
-        raise APIError(422, "validation_error") from exc
 
     async def generator():
         sequence = start_sequence
@@ -232,17 +250,42 @@ async def cancel_run(run_id: str, user: CurrentUser, db: Database) -> dict:
     run = await owned_run(db, user.id, run_id)
     if run.status in TERMINAL_STATUSES:
         raise APIError(409, "conflict")
-    if run.agent_run_id:
+    agent_run_id = run.agent_run_id
+    correlation_id = run.correlation_id
+    await db.close()
+
+    if agent_run_id:
         client = AgentServiceClient(get_settings())
         try:
-            await client.cancel(run.agent_run_id, run.correlation_id)
+            await client.cancel(agent_run_id, correlation_id)
         finally:
             await client.close()
-    run.status = "cancelled"
-    run.finished_at = utcnow()
-    await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "cancelled"})
-    await db.commit()
-    return {"run_id": run.id, "status": "cancelling"}
+
+    async with SessionFactory() as write_db:
+        cancelled = await write_db.execute(
+            update(Run)
+            .where(
+                Run.id == run_id,
+                Run.user_id == user.id,
+                Run.status.not_in(TERMINAL_STATUSES),
+            )
+            .values(
+                status="cancelled",
+                finished_at=utcnow(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if cancelled.rowcount != 1:
+            await write_db.rollback()
+            raise APIError(409, "conflict")
+        await append_event(
+            write_db,
+            run_id,
+            "run_status",
+            {"run_id": run_id, "status": "cancelled"},
+        )
+        await write_db.commit()
+    return {"run_id": run_id, "status": "cancelling"}
 
 
 @router.post("/plans/{plan_id}/modify", status_code=202)

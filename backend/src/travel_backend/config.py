@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -38,6 +38,12 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @model_validator(mode="after")
+    def validate_cors_origins(self) -> "Settings":
+        if not self.cors_origins or "*" in self.cors_origins:
+            raise ValueError("CORS_ORIGINS must contain explicit trusted origins")
+        return self
 
 
 @lru_cache

@@ -171,6 +171,10 @@ def test_settings_can_be_built_without_a_real_env_file():
         log_level="INFO",
     )
     assert settings.default_locale == "ru-RU"
+    wildcard_values = settings.model_dump()
+    wildcard_values["cors_origins"] = ["*"]
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, **wildcard_values)
 
 
 async def test_agent_events_are_validated_and_sensitive_messages_are_normalized(
@@ -251,6 +255,66 @@ async def test_agent_events_are_validated_and_sensitive_messages_are_normalized(
                     "delta": "bad",
                 },
             )
+        with pytest.raises(APIError) as oversized_message_id:
+            await process_agent_event(
+                db,
+                run,
+                "message_delta",
+                {
+                    "agent_run_id": "agent-expected",
+                    "message_id": "m" * 201,
+                    "delta": "bad",
+                },
+            )
+        assert oversized_message_id.value.details["source"] == "agent_message_delta"
+
+        with pytest.raises(APIError) as route_preview:
+            await process_agent_event(
+                db,
+                run,
+                "route_preview",
+                {
+                    "agent_run_id": "agent-expected",
+                    "points": [],
+                },
+            )
+        assert route_preview.value.details["source"] == "agent_event"
+
+        await process_agent_event(
+            db,
+            run,
+            "clarifying_question",
+            {
+                "agent_run_id": "agent-expected",
+                "question": {
+                    "id": "question-1",
+                    "text": "Choose one",
+                    "options": [
+                        {
+                            "id": "option-1",
+                            "label": "First",
+                            "private_score": 0.99,
+                        }
+                    ],
+                    "allow_freeform": False,
+                    "internal_prompt": "private",
+                },
+            },
+        )
+        question_event = await db.scalar(
+            select(RunEvent)
+            .where(
+                RunEvent.run_id == run.id,
+                RunEvent.event_name == "clarifying_question",
+            )
+            .order_by(RunEvent.sequence.desc())
+        )
+        assert question_event.payload["question"] == {
+            "id": "question-1",
+            "text": "Choose one",
+            "options": [{"id": "option-1", "label": "First"}],
+            "allow_freeform": False,
+        }
 
         await process_agent_event(
             db,

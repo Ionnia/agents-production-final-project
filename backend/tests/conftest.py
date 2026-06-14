@@ -22,6 +22,7 @@ os.environ["LOG_LEVEL"] = "INFO"
 
 from travel_backend.database import Base, SessionFactory, engine  # noqa: E402
 from travel_backend.main import app  # noqa: E402
+from travel_backend.rate_limit import reset_rate_limits  # noqa: E402
 from travel_backend.seed import seed_data  # noqa: E402
 
 
@@ -37,12 +38,16 @@ async def database():
 
 @pytest.fixture(autouse=True)
 async def reset_database(database):
+    reset_rate_limits()
     async with engine.begin() as connection:
         for table in reversed(Base.metadata.sorted_tables):
             await connection.execute(table.delete())
     async with SessionFactory() as db:
         await seed_data(db)
-    yield
+    try:
+        yield
+    finally:
+        reset_rate_limits()
 
 
 @pytest.fixture

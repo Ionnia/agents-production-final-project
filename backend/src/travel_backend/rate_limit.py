@@ -6,6 +6,10 @@ from .errors import APIError
 _requests: dict[str, deque[datetime]] = defaultdict(deque)
 
 
+def reset_rate_limits() -> None:
+    _requests.clear()
+
+
 def check_rate_limit(key: str, limit: int = 20, window_seconds: int = 60) -> None:
     now = datetime.now(UTC)
     cutoff = now - timedelta(seconds=window_seconds)

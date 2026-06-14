@@ -728,14 +728,72 @@ components:
     MapPoint:
       type: object
       required: [id, name, kind, lat, lng, order]
+      description: |
+        Ordered route point. Rich place-card fields are optional Agent Service content validated
+        and persisted by the backend. All strings are plain text, never trusted HTML.
       properties:
         id: { type: string }
-        name: { type: string, description: Settlement / point label }
+        name: { type: string, description: Place / route point label }
         kind: { type: string, enum: [origin, destination, stop] }
         lat: { type: number, format: double }
         lng: { type: number, format: double }
         order: { type: integer, description: Position along the route (0-based) }
-        note: { type: string }
+        note: { type: string, maxLength: 2000 }
+        description:
+          type: string
+          maxLength: 1000
+          deprecated: true
+          description: Legacy alias of `summary`; both carry the same value when present.
+        summary: { type: string, maxLength: 1000 }
+        visit_date: { type: string, format: date }
+        visit_time:
+          type: string
+          pattern: '^\d{2}:\d{2}$'
+          description: Local visit time in HH:MM form.
+        visit_start: { type: string, format: date-time }
+        visit_end: { type: string, format: date-time }
+        duration_minutes: { type: integer, minimum: 0, maximum: 10080 }
+        cost_rub: { type: integer, minimum: 0 }
+        price_note: { type: string, maxLength: 1000 }
+        calendar_event_id:
+          type: string
+          description: Backend-owned id of the linked calendar event.
+        ref_id:
+          type: string
+          description: Related public business reference, when applicable.
+        transport_to_next: { type: string, maxLength: 1000 }
+        travel_time_to_next_minutes: { type: integer, minimum: 0, maximum: 10080 }
+        distance_to_next_km: { type: number, format: double, minimum: 0, maximum: 50000 }
+        historical_background: { type: string, maxLength: 4000 }
+        interesting_facts:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 500 }
+        visit_tips:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 500 }
+        food_recommendations:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 500 }
+        signature_dishes:
+          type: array
+          maxItems: 20
+          items: { type: string, minLength: 1, maxLength: 500 }
+        average_check_rub: { type: integer, minimum: 0 }
+        booking_advice: { type: string, maxLength: 2000 }
+        accessibility_notes: { type: string, maxLength: 2000 }
+        safety_notes: { type: string, maxLength: 2000 }
+        weather_notes: { type: string, maxLength: 2000 }
+        why_recommended: { type: string, maxLength: 2000 }
+        content_source:
+          type: string
+          maxLength: 100
+          pattern: '^[a-z][a-z0-9_:-]*$'
+        content_confidence:
+          type: string
+          enum: [low, medium, high]
     QuestionOption:
       type: object
       required: [id, label]
