@@ -39,10 +39,14 @@ venv/
 env/
 ENV/
 .python-version
+!.python-version
 
 # Environments / secrets
 .env
 .env.*
+!.env.example
+!**/.env.example
+!agent-service/.env.example
 *.local
 
 # Jupyter
@@ -63,6 +67,9 @@ yarn-error.log*
 
 # Logs
 *.log
+*.db
+*.sqlite
+*.sqlite3
 
 # Test / coverage
 .pytest_cache/
@@ -72,10 +79,23 @@ htmlcov/
 .tox/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
+.uv-python/
 
 .pnpm-store
 .agents
 .claude
 skills-lock.json
+
 # Visual brainstorming companion artifacts
 .superpowers/
+
+# Agent prediction outputs / indexes
+baseline_predictions.jsonl
+b2_predictions.jsonl
+b3_predictions.jsonl
+final_predictions.jsonl
+mas_predictions.jsonl
+mas_predictions2.jsonl
+langgraph_predictions.jsonl
+data/indexes/

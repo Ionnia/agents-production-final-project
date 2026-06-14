@@ -56,11 +56,11 @@ added/removed points, which starts a new rebuild run. Lifecycles:
 
 | Module | Path | Spec | Status |
 |---|---|---|---|
-| **Frontend↔Backend contract** | [`api/`](./api/) | [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) → [`api/openapi.yaml`](./api/openapi.yaml) | Defined; not implemented |
-| **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Defined; not implemented |
-| **Frontend** | [`frontend/`](./frontend/) | [`frontend/SPECIFICATION.md`](./frontend/SPECIFICATION.md) | Implemented: chat UI, dithered backgrounds, side panel, plan map/calendar, auth — all mock-backed (MSW) |
+| **Frontend↔Backend contract** | [`api/`](./api/) | [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) → [`api/openapi.yaml`](./api/openapi.yaml) | Frozen; implemented by `backend/`, consumed by `frontend/` |
+| **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Frozen; backend client + Contract B implemented, Agent Service pending |
+| **Frontend** | [`frontend/`](./frontend/) | [`frontend/SPECIFICATION.md`](./frontend/SPECIFICATION.md) | Implemented: chat UI, dithered backgrounds, side panel, plan map/calendar, auth — mock-backed (MSW) |
 | **Domain data** | [`data/`](./data/) | [`README.md`](./README.md) (dataset description) | Present (synthetic seed data) |
-| **Backend service (BFF)** | _not in repo yet_ | — | Planned; implements the `api/` + `/internal` contracts, owns the business DB |
+| **Backend service (BFF)** | [`backend/`](./backend/) | [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md) | Implemented and verified MVP; FastAPI, persistence, auth, internal tools, Agent Service client, SSE |
 | **Agent Service** | _not in repo yet_ | — | Planned; implements Contract A; LangGraph + RAG/LLM |
 
 ### 2.1 Frontend↔Backend contract (`api/`)
@@ -101,6 +101,17 @@ Synthetic seed data the agent reasons over, described in [`README.md`](./README.
 - `documents/` — service policy documents for RAG (booking rules, fares & baggage, hotel policy,
   package tours).
 
+### 2.5 Backend (`backend/`)
+
+Python 3.13 FastAPI BFF implementing the frozen frontend API and Backend Internal Tool API. It owns
+authentication, access control, SQLite persistence, CSV seed import, sessions/groups/plans, the
+persistent frontend SSE event log, and validation of Agent Service draft plans. See
+[`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md). Its supported ASGI entry point is
+`backend/app/main.py` (`uvicorn app.main:app` from the backend directory). The verified backend
+security boundary separates user JWTs, internal service tokens, and one-time stream tickets, and
+treats Agent Service responses and plan proposals as untrusted input. Alembic migrations are
+required before startup; runtime seed reconciliation repairs only backend-owned synthetic data.
+
 ## 3. Cross-cutting conventions
 
 - **APIs:** OpenAPI 3.1. Frontend↔backend under `/api/v1` (Bearer **JWT**); backend↔agent under `/v1`
@@ -111,6 +122,10 @@ Synthetic seed data the agent reasons over, described in [`README.md`](./README.
 - **IDs:** opaque strings — UUIDs for new entities; seeded groups keep `G-0001`-style ids.
 - **Specs stay in sync with code** ([`AGENTS.md`](./AGENTS.md)): update the relevant module
   `SPECIFICATION.md` (and this root index) in the same change that touches the code.
+- **Route-content hand-off:** [`docs/FRONTEND_EXPECTATIONS.md`](./docs/FRONTEND_EXPECTATIONS.md)
+  defines future map/card consumption, while
+  [`docs/AGENT_ROUTE_CONTENT_EXPECTATIONS.md`](./docs/AGENT_ROUTE_CONTENT_EXPECTATIONS.md) defines
+  the untrusted structured place content expected from the future Agent Service.
 
 ## 4. Design history
 
