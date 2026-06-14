@@ -56,11 +56,11 @@ added/removed points, which starts a new rebuild run. Lifecycles:
 
 | Module | Path | Spec | Status |
 |---|---|---|---|
-| **Frontend↔Backend contract** | [`api/`](./api/) | [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) → [`api/openapi.yaml`](./api/openapi.yaml) | Defined; not implemented |
-| **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Defined; not implemented |
+| **Frontend↔Backend contract** | [`api/`](./api/) | [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) → [`api/openapi.yaml`](./api/openapi.yaml) | Defined; implemented by `backend/` |
+| **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Defined; backend client + Contract B implemented, Agent Service pending |
 | **Frontend** | [`frontend/`](./frontend/) | [`frontend/src/SPEC.md`](./frontend/src/SPEC.md) (UI/visual scenes) | UI shell + animated backgrounds; API client not built |
 | **Domain data** | [`data/`](./data/) | [`README.md`](./README.md) (dataset description) | Present (synthetic seed data) |
-| **Backend service (BFF)** | _not in repo yet_ | — | Planned; implements the `api/` + `/internal` contracts, owns the business DB |
+| **Backend service (BFF)** | [`backend/`](./backend/) | [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md) | Implemented MVP; FastAPI, persistence, auth, internal tools, Agent Service client, SSE |
 | **Agent Service** | _not in repo yet_ | — | Planned; implements Contract A; LangGraph + RAG/LLM |
 
 ### 2.1 Frontend↔Backend contract (`api/`)
@@ -98,6 +98,13 @@ Synthetic seed data the agent reasons over, described in [`README.md`](./README.
 - `qa/` — Q&A dataset for E2E evaluation.
 - `documents/` — service policy documents for RAG (booking rules, fares & baggage, hotel policy,
   package tours).
+
+### 2.5 Backend (`backend/`)
+
+Python 3.13 FastAPI BFF implementing the frozen frontend API and Backend Internal Tool API. It owns
+authentication, access control, SQLite persistence, CSV seed import, sessions/groups/plans, the
+persistent frontend SSE event log, and validation of Agent Service draft plans. See
+[`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md).
 
 ## 3. Cross-cutting conventions
 

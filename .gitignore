@@ -43,6 +43,8 @@ ENV/
 # Environments / secrets
 .env
 .env.*
+!.env.example
+!**/.env.example
 *.local
 
 # Jupyter
@@ -63,6 +65,9 @@ yarn-error.log*
 
 # Logs
 *.log
+*.db
+*.sqlite
+*.sqlite3
 
 # Test / coverage
 .pytest_cache/
@@ -72,6 +77,8 @@ htmlcov/
 .tox/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
+.uv-python/
 
 .pnpm-store
 .agents
