@@ -1,6 +1,10 @@
 # Agent Service Module — Specification
 
-**Status:** Contracts defined (design approved); not yet implemented.
+**Status:** Contracts defined (design approved). **Contract A is implemented** as the FastAPI service
+in this directory (`src/agent_service/`, see [`README.md`](./README.md)) — it serves runs+SSE and
+validates recommendation drafts through Contract B. The reasoning core is the Final agent graph
+([`agent/baselines/final_agent.py`](../agent/baselines/final_agent.py)); LLM credentials and the
+policy index are required for real runs.
 **Artifacts:**
 - [`agent-service/openapi.yaml`](./openapi.yaml) — **Contract A** (Backend → Agent Service), OpenAPI 3.1.
 - [`agent-service/internal-tools-openapi.yaml`](./internal-tools-openapi.yaml) — **Contract B**
@@ -9,8 +13,8 @@
 **Design rationale:** [`docs/superpowers/specs/2026-06-14-backend-agent-api-design.md`](../docs/superpowers/specs/2026-06-14-backend-agent-api-design.md).
 Both files validate with `@redocly/cli lint`.
 
-This module freezes the **backend↔agent interface** so the backend and agent teams can develop
-independently. No service code lives here yet — only the two contracts and this spec.
+This module freezes and implements the **backend↔agent interface** so the backend and agent teams can
+develop independently. Contract B remains implemented by the backend; this service consumes it.
 
 ## 1. Boundary
 
@@ -34,8 +38,8 @@ persists** (via the already-frozen plan endpoints in [`api/openapi.yaml`](../api
 
 | Decision | Choice |
 |---|---|
-| Agent state | **Stateful** LangGraph threads/checkpoints; backend sends only the new turn + `thread_id`. |
-| Data access | **Variant B** — agent owns RAG; pulls business data from the Backend Internal Tool API. |
+| Agent state | In-memory run/thread store for MVP; backend sends new turns with `thread_id`. Persistent LangGraph checkpoints are a follow-up. |
+| Data access | Agent owns policy RAG and local experimental graph data access; recommendation drafts are validated via Backend Contract B. |
 | Run model | **Two-call**: `POST /v1/runs` → `stream_url`, then `GET /v1/runs/{id}/stream` (SSE). |
 | Event vocabulary | **Stable semantic events** + one optional `observability` event (raw LangGraph steps). |
 | Persistence | **Agent proposes, backend disposes** — Contract B is read-only. |
@@ -70,10 +74,11 @@ persists** (via the already-frozen plan endpoints in [`api/openapi.yaml`](../api
 
 `outcome ∈ recommendation | clarification | constraints_conflict | escalation`.
 
-**Run lifecycle:** `POST /v1/runs` → open `…/stream` → agent reasons (pulling data via Contract B) →
-emits one outcome; on a `plan` event the backend validates + persists; terminal `run_status` carries
-the `outcome`. The backend normalizes these semantic events into the frontend vocabulary it already
-exposes.
+**Run lifecycle:** `POST /v1/runs` → open `…/stream` → Final agent graph reasons → the service maps
+the graph output to Contract A semantic events. Before a `recommendation` is emitted, the service
+calls `POST /internal/plans/validate`; on `valid=false` it downgrades to `clarification`. On a `plan`
+event the backend validates again and persists; terminal `run_status` carries the `outcome`. The
+backend normalizes these semantic events into the frontend vocabulary it already exposes.
 
 ## 4. Contract B — Backend Internal Tool API (`/internal`)
 
@@ -125,7 +130,9 @@ npx @redocly/cli preview-docs agent-service/openapi.yaml   # interactive docs
 
 ## 8. Open items
 
-- MVP shortcut: run the agent as an in-process module inside the backend first, then split it out
-  behind this same contract.
+- Pass conversation history / active plan context from the backend into `POST /v1/runs` so the Final
+  graph can handle multi-turn replanning beyond `thread_id`.
+- Replace local CSV access inside the experimental Final graph with HTTP tools over Contract B.
+- Persistent LangGraph checkpoints instead of the current in-memory run/thread store.
 - mTLS / service-to-service JWT with scopes — upgrade from static tokens after the prototype.
 - Plan versioning/history and `eval/*` + `debug/*` ops endpoints — separate specs.

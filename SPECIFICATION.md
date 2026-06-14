@@ -28,6 +28,11 @@ Domain data (data/):  travelers·flights·hotels·tours → backend business DB;
                       documents → agent RAG;  reference·qa → eval.
 ```
 
+All three runtime modules are now implemented and merged into this branch: the **frontend** (Vue 3,
+mock-backed via MSW), the **backend BFF** (FastAPI), and the **Agent Service** (FastAPI + LangGraph
+runtime). The two service-to-service surfaces (Contract A, Contract B) and the frontend↔backend `api/`
+contract were frozen first, and each team built against the frozen OpenAPI documents.
+
 - The **frontend** is a chat UI and talks only to the backend. The user converses with the agent,
   answers closed clarifying questions, watches the route render on a map, and edits it once ready.
 - The **backend (BFF)** owns all business data and access control (users, sessions, plans, groups,
@@ -57,11 +62,12 @@ added/removed points, which starts a new rebuild run. Lifecycles:
 | Module | Path | Spec | Status |
 |---|---|---|---|
 | **Frontend↔Backend contract** | [`api/`](./api/) | [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) → [`api/openapi.yaml`](./api/openapi.yaml) | Frozen; implemented by `backend/`, consumed by `frontend/` |
-| **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Frozen; backend client + Contract B implemented, Agent Service pending |
-| **Frontend** | [`frontend/`](./frontend/) | [`frontend/SPECIFICATION.md`](./frontend/SPECIFICATION.md) | Implemented: chat UI, dithered backgrounds, side panel, plan map/calendar, auth — mock-backed (MSW) |
+| **Backend↔Agent contracts** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) → [`openapi.yaml`](./agent-service/openapi.yaml) + [`internal-tools-openapi.yaml`](./agent-service/internal-tools-openapi.yaml) | Frozen; Contract A implemented by `agent-service/`, Contract B implemented by `backend/` |
+| **Frontend** | [`frontend/`](./frontend/) | [`frontend/SPECIFICATION.md`](./frontend/SPECIFICATION.md) | Implemented: chat UI, dithered backgrounds, side panel, plan map/calendar, auth — mock-backed (MSW), typed from `api/openapi.yaml` |
 | **Domain data** | [`data/`](./data/) | [`README.md`](./README.md) (dataset description) | Present (synthetic seed data) |
-| **Backend service (BFF)** | [`backend/`](./backend/) | [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md) | Implemented and verified MVP; FastAPI, persistence, auth, internal tools, Agent Service client, SSE |
-| **Agent Service** | _not in repo yet_ | — | Planned; implements Contract A; LangGraph + RAG/LLM |
+| **Backend service (BFF)** | [`backend/`](./backend/) | [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md) | Implemented: FastAPI, persistence, auth, internal tools, Agent Service client, SSE |
+| **Agent Service** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) | Implemented: FastAPI Contract A (runs+SSE), uses Final agent graph, validates draft plans via Contract B |
+| **Agent experiments/runtime** | [`agent/`](./agent/) | [`agent/SPECIFICATION.md`](./agent/SPECIFICATION.md) | Research baselines B1/B2/B3 + selected Final graph imported by the Agent Service |
 
 ### 2.1 Frontend↔Backend contract (`api/`)
 
@@ -99,7 +105,8 @@ Synthetic seed data the agent reasons over, described in [`README.md`](./README.
 - `reference/` — reference plans / graded recommendations (`*_recommendations.csv`).
 - `qa/` — Q&A dataset for E2E evaluation.
 - `documents/` — service policy documents for RAG (booking rules, fares & baggage, hotel policy,
-  package tours).
+  package tours, and the agent behavior regime — outcome types, escalation/clarification/rejection,
+  replanning).
 
 ### 2.5 Backend (`backend/`)
 
@@ -107,10 +114,29 @@ Python 3.13 FastAPI BFF implementing the frozen frontend API and Backend Interna
 authentication, access control, SQLite persistence, CSV seed import, sessions/groups/plans, the
 persistent frontend SSE event log, and validation of Agent Service draft plans. See
 [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md). Its supported ASGI entry point is
-`backend/app/main.py` (`uvicorn app.main:app` from the backend directory). The verified backend
-security boundary separates user JWTs, internal service tokens, and one-time stream tickets, and
-treats Agent Service responses and plan proposals as untrusted input. Alembic migrations are
-required before startup; runtime seed reconciliation repairs only backend-owned synthetic data.
+`backend/app/main.py` (`uvicorn app.main:app` from the backend directory). The backend security
+boundary separates user JWTs, internal service tokens, and one-time stream tickets, and treats Agent
+Service responses and plan proposals as untrusted input. Alembic migrations are required before
+startup; runtime seed reconciliation repairs only backend-owned synthetic data.
+
+### 2.6 Agent Service (`agent-service/`)
+
+Python FastAPI service implementing **Contract A** (`POST /v1/runs`, SSE event stream, run cancel).
+It hosts the selected **Final agent graph** imported from [`agent/`](./agent/), retrieves business
+data and validates each draft plan through backend **Contract B** (`/internal`) before streaming a
+`plan_status: ready`, and emits assistant text, clarifying questions, and map snapshots as Contract A
+SSE events. It is stateful per agent thread and treats the backend as the only source of business
+data. Configuration (LLM provider/key, backend internal URL, service tokens) is documented in
+[`agent-service/README.md`](./agent-service/README.md) and
+[`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md).
+
+### 2.7 Agent experiments (`agent/`)
+
+Local agent research/runtime code: a progression of agent architectures (B1 single-agent LangChain
+Tool+RAG; B2 LangGraph `draft → validate → replan`; B3 structured MAS; and the selected Final graph),
+a Chroma policy-index builder, and a shared QA prediction evaluator. The HTTP/SSE boundary lives in
+[`agent-service/`](./agent-service/); the service imports the selected Final graph from this module
+and validates recommendation drafts through backend Contract B before streaming them.
 
 ## 3. Cross-cutting conventions
 
@@ -123,9 +149,9 @@ required before startup; runtime seed reconciliation repairs only backend-owned 
 - **Specs stay in sync with code** ([`AGENTS.md`](./AGENTS.md)): update the relevant module
   `SPECIFICATION.md` (and this root index) in the same change that touches the code.
 - **Route-content hand-off:** [`docs/FRONTEND_EXPECTATIONS.md`](./docs/FRONTEND_EXPECTATIONS.md)
-  defines future map/card consumption, while
+  defines map/card consumption, while
   [`docs/AGENT_ROUTE_CONTENT_EXPECTATIONS.md`](./docs/AGENT_ROUTE_CONTENT_EXPECTATIONS.md) defines
-  the untrusted structured place content expected from the future Agent Service.
+  the untrusted structured place content the Agent Service produces.
 
 ## 4. Design history
 
