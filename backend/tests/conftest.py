@@ -8,10 +8,15 @@ from httpx import ASGITransport, AsyncClient
 TEST_DB = Path(__file__).resolve().parents[1] / "test.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB.as_posix()}"
 os.environ["JWT_SECRET"] = "test-jwt-secret-with-sufficient-length"
+os.environ["ACCESS_TOKEN_TTL_MINUTES"] = "15"
+os.environ["REFRESH_TOKEN_TTL_DAYS"] = "30"
 os.environ["BACKEND_TOOL_TOKEN"] = "test-tool-token"
+os.environ["AGENT_SERVICE_URL"] = "http://agent.test"
 os.environ["AGENT_SERVICE_TOKEN"] = "test-agent-token"
 os.environ["DEFAULT_LOCALE"] = "ru-RU"
 os.environ["SUPPORTED_LOCALES"] = "ru-RU,en-US"
+os.environ["CORS_ORIGINS"] = "http://testserver"
+os.environ["LOG_LEVEL"] = "INFO"
 
 from travel_backend.database import Base, engine  # noqa: E402
 from travel_backend.main import app  # noqa: E402
@@ -55,3 +60,39 @@ async def register_user(client: AsyncClient, email: str) -> tuple[dict, dict[str
     data = response.json()
     return data, {"Authorization": f"Bearer {data['tokens']['access_token']}"}
 
+
+async def create_group(client: AsyncClient, headers: dict[str, str]) -> dict:
+    response = await client.post(
+        "/api/v1/groups",
+        headers=headers,
+        json={
+            "name": "Тестовая группа",
+            "budget_rub": 180000,
+            "origin_city": "Moscow",
+            "destination": "IST",
+            "start_date": "2026-07-10",
+            "end_date": "2026-07-15",
+            "members": [
+                {
+                    "full_name": "Иван Тестов",
+                    "age": 35,
+                    "preferences": [
+                        {
+                            "type": "meal",
+                            "value": "breakfast",
+                            "comment": "Нужен завтрак",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def tool_headers() -> dict[str, str]:
+    return {
+        "Authorization": "Bearer test-tool-token",
+        "X-Correlation-ID": "test-correlation",
+    }

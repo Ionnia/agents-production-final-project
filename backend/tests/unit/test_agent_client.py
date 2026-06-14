@@ -27,6 +27,16 @@ async def test_agent_client_create_and_stream_with_mock_transport():
                     "stream_url": "/v1/runs/agent-1/stream",
                 },
             )
+        if request.url.path == "/v1/runs/agent-1" and request.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "agent_run_id": "agent-1",
+                    "thread_id": "thread-1",
+                    "status": "running",
+                    "started_at": "2026-06-14T10:00:00Z",
+                },
+            )
         return httpx.Response(
             200,
             headers={"content-type": "text/event-stream"},
@@ -51,6 +61,8 @@ async def test_agent_client_create_and_stream_with_mock_transport():
     )
     created = await service.create_run({"mode": "qa"}, "corr")
     assert created.agent_run_id == "agent-1"
+    snapshot = await service.get_run(created.agent_run_id, "corr")
+    assert snapshot["status"] == "running"
     events = [event async for event in service.stream(created.stream_url, "corr")]
     assert [event.event for event in events] == ["message", "run_status"]
     assert events[0].data["message"]["content"] == "Готово"
@@ -73,3 +85,25 @@ async def test_agent_client_maps_transport_timeout_to_controlled_error():
     assert captured.value.code == "timeout"
     await service.close()
 
+
+async def test_agent_client_cancel_sends_correlation_header():
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            202,
+            json={"agent_run_id": "agent-1", "status": "cancelling"},
+        )
+
+    service = AgentServiceClient(settings())
+    await service.client.aclose()
+    service.client = httpx.AsyncClient(
+        base_url="http://agent.test",
+        transport=httpx.MockTransport(handler),
+        headers={"Authorization": "Bearer token"},
+    )
+    await service.cancel("agent-1", "corr")
+    assert requests[0].url.path == "/v1/runs/agent-1/cancel"
+    assert requests[0].headers["X-Correlation-ID"] == "corr"
+    await service.close()

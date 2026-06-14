@@ -11,9 +11,7 @@ router = APIRouter(prefix="/plans", tags=["Plans"])
 
 
 async def owned_plan(db: Database, user_id: str, plan_id: str) -> Plan:
-    plan = await db.scalar(
-        select(Plan).where(Plan.id == plan_id, Plan.user_id == user_id)
-    )
+    plan = await db.scalar(select(Plan).where(Plan.id == plan_id, Plan.user_id == user_id))
     if plan is None:
         raise APIError(404, "not_found")
     return plan
@@ -53,9 +51,7 @@ async def get_map(plan_id: str, user: CurrentUser, db: Database) -> dict:
     plan = await owned_plan(db, user.id, plan_id)
     points = (
         await db.scalars(
-            select(PlanMapPoint)
-            .where(PlanMapPoint.plan_id == plan.id)
-            .order_by(PlanMapPoint.order)
+            select(PlanMapPoint).where(PlanMapPoint.plan_id == plan.id).order_by(PlanMapPoint.order)
         )
     ).all()
     serialized = [

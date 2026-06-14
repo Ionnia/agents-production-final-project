@@ -61,4 +61,3 @@ def choose_locale(accept_language: str | None, supported: list[str], default: st
 def message(key: str, locale: str = "ru-RU") -> str:
     catalog = MESSAGES.get(locale, MESSAGES["ru-RU"])
     return catalog.get(key, MESSAGES["ru-RU"].get(key, key))
-

@@ -15,4 +15,3 @@ def check_rate_limit(key: str, limit: int = 20, window_seconds: int = 60) -> Non
     if len(bucket) >= limit:
         raise APIError(429, "rate_limited")
     bucket.append(now)
-

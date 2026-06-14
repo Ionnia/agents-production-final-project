@@ -15,9 +15,7 @@ router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
 async def owned_session(db: Database, user_id: str, session_id: str) -> ChatSession:
     session = await db.scalar(
-        select(ChatSession).where(
-            ChatSession.id == session_id, ChatSession.user_id == user_id
-        )
+        select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == user_id)
     )
     if session is None:
         raise APIError(404, "not_found")
@@ -74,9 +72,7 @@ async def get_session(session_id: str, user: CurrentUser, db: Database) -> dict:
     ).all()
     plans = (
         await db.scalars(
-            select(Plan)
-            .where(Plan.session_id == session.id)
-            .order_by(Plan.created_at)
+            select(Plan).where(Plan.session_id == session.id).order_by(Plan.created_at)
         )
     ).all()
     return {
@@ -100,4 +96,3 @@ async def get_session(session_id: str, user: CurrentUser, db: Database) -> dict:
         ],
         "plans": [await plan_summary_dict(db, item) for item in plans],
     }
-

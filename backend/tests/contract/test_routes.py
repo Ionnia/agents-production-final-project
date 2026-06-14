@@ -34,4 +34,3 @@ def test_frozen_contract_routes_are_registered():
         ("POST", "/internal/plans/validate"),
     }
     assert expected <= routes
-

@@ -170,8 +170,11 @@ class Run(Base):
         ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True
     )
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    group_id: Mapped[str | None] = mapped_column(ForeignKey("travel_groups.id"), index=True)
     active_plan_id: Mapped[str | None] = mapped_column(String)
     agent_run_id: Mapped[str | None] = mapped_column(String, unique=True)
+    agent_thread_id: Mapped[str | None] = mapped_column(String, index=True)
+    agent_stream_url: Mapped[str | None] = mapped_column(String)
     correlation_id: Mapped[str] = mapped_column(String, unique=True)
     mode: Mapped[str] = mapped_column(String(30))
     status: Mapped[str] = mapped_column(String(30), default="started")

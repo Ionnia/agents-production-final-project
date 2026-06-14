@@ -25,18 +25,12 @@ async def test_stream_ticket_and_persisted_sse_replay(client, unique_email):
         )
         db.add(run)
         await db.flush()
-        await append_event(
-            db, run.id, "run_status", {"run_id": run.id, "status": "started"}
-        )
-        await append_event(
-            db, run.id, "run_status", {"run_id": run.id, "status": "completed"}
-        )
+        await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "started"})
+        await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "completed"})
         await db.commit()
         run_id = run.id
 
-    ticket_response = await client.post(
-        f"/api/v1/chat/{run_id}/stream-ticket", headers=headers
-    )
+    ticket_response = await client.post(f"/api/v1/chat/{run_id}/stream-ticket", headers=headers)
     assert ticket_response.status_code == 200
     ticket = ticket_response.json()["ticket"]
 
@@ -54,8 +48,8 @@ async def test_stream_ticket_and_persisted_sse_replay(client, unique_email):
         headers={"Last-Event-ID": "1"},
     )
     assert resumed.status_code == 200
-    assert 'id: 2' in resumed.text
-    assert 'id: 1' not in resumed.text
+    assert "id: 2" in resumed.text
+    assert "id: 1" not in resumed.text
 
     invalid = await client.get(f"/api/v1/chat/{run_id}/stream?ticket=invalid")
     assert invalid.status_code == 401

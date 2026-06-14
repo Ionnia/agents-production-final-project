@@ -88,9 +88,7 @@ async def test_agent_ready_is_gated_until_valid_draft_is_persisted(client, uniqu
         assert plan.estimated_total_rub == 130500
         events = (
             await db.scalars(
-                select(RunEvent)
-                .where(RunEvent.run_id == run.id)
-                .order_by(RunEvent.sequence)
+                select(RunEvent).where(RunEvent.run_id == run.id).order_by(RunEvent.sequence)
             )
         ).all()
         assert [event.event_name for event in events] == [
@@ -102,4 +100,3 @@ async def test_agent_ready_is_gated_until_valid_draft_is_persisted(client, uniqu
         assert events[0].payload["status"] == "building"
         assert events[1].payload["status"] == "ready"
         assert all(point["id"] for point in events[2].payload["points"])
-

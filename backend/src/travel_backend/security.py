@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from secrets import token_urlsafe
+from secrets import compare_digest, token_urlsafe
 from typing import Annotated
 from uuid import uuid4
 
@@ -72,9 +72,7 @@ async def get_current_user(
     if credentials is None:
         raise APIError(401, "unauthorized")
     try:
-        payload = jwt.decode(
-            credentials.credentials, settings.jwt_secret, algorithms=["HS256"]
-        )
+        payload = jwt.decode(credentials.credentials, settings.jwt_secret, algorithms=["HS256"])
     except jwt.ExpiredSignatureError as exc:
         raise APIError(401, "token_expired") from exc
     except jwt.InvalidTokenError as exc:
@@ -93,7 +91,9 @@ async def require_tool_auth(
     x_correlation_id: Annotated[str | None, Header(alias="X-Correlation-ID")] = None,
     settings: Annotated[Settings, Depends(get_settings)] = None,
 ) -> str:
-    if credentials is None or credentials.credentials != settings.backend_tool_token:
+    if credentials is None or not compare_digest(
+        credentials.credentials, settings.backend_tool_token
+    ):
         raise APIError(401, "unauthorized")
     if not x_correlation_id:
         raise APIError(422, "validation_error", details={"header": "X-Correlation-ID"})
@@ -103,4 +103,3 @@ async def require_tool_auth(
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 Database = Annotated[AsyncSession, Depends(get_db)]
-

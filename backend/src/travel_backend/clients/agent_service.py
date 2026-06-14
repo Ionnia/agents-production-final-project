@@ -16,7 +16,7 @@ class CreatedRun:
     stream_url: str
 
 
-class AgentServiceClient:
+class AgentClient:
     def __init__(self, settings: Settings) -> None:
         timeout = httpx.Timeout(
             connect=settings.agent_connect_timeout_seconds,
@@ -90,6 +90,26 @@ class AgentServiceClient:
         except (httpx.HTTPError, json.JSONDecodeError) as exc:
             raise APIError(502, "agent_unavailable") from exc
 
+    async def get_run(self, agent_run_id: str, correlation_id: str) -> dict:
+        try:
+            response = await self.client.get(
+                f"/v1/runs/{agent_run_id}",
+                headers={"X-Correlation-ID": correlation_id},
+            )
+        except httpx.TimeoutException as exc:
+            raise APIError(504, "timeout") from exc
+        except httpx.HTTPError as exc:
+            raise APIError(502, "agent_unavailable") from exc
+        if response.status_code >= 500:
+            raise APIError(502, "agent_unavailable")
+        if response.status_code >= 400:
+            raise APIError(
+                502,
+                "agent_unavailable",
+                details={"status": response.status_code},
+            )
+        return response.json()
+
     async def cancel(self, agent_run_id: str, correlation_id: str) -> None:
         try:
             response = await self.client.post(
@@ -103,3 +123,5 @@ class AgentServiceClient:
         except httpx.HTTPError as exc:
             raise APIError(502, "agent_unavailable") from exc
 
+
+AgentServiceClient = AgentClient

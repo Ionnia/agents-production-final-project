@@ -32,9 +32,7 @@ TERMINAL_STATUSES = {"completed", "cancelled", "error"}
 async def append_event(
     db: AsyncSession, run_id: str, event_name: str, payload: dict[str, Any]
 ) -> RunEvent:
-    current = await db.scalar(
-        select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run_id)
-    )
+    current = await db.scalar(select(func.max(RunEvent.sequence)).where(RunEvent.run_id == run_id))
     event = RunEvent(
         run_id=run_id,
         sequence=(current or 0) + 1,
@@ -77,9 +75,7 @@ async def get_group(db: AsyncSession, group_id: str | None) -> TravelGroup | Non
     return await db.scalar(
         select(TravelGroup)
         .where(TravelGroup.id == group_id)
-        .options(
-            selectinload(TravelGroup.members).selectinload(GroupMember.preferences)
-        )
+        .options(selectinload(TravelGroup.members).selectinload(GroupMember.preferences))
     )
 
 
@@ -111,9 +107,7 @@ async def persist_draft(
 
     plan = await ensure_plan(db, run)
     await db.execute(delete(PlanMapPoint).where(PlanMapPoint.plan_id == plan.id))
-    await db.execute(
-        delete(PlanCalendarEvent).where(PlanCalendarEvent.plan_id == plan.id)
-    )
+    await db.execute(delete(PlanCalendarEvent).where(PlanCalendarEvent.plan_id == plan.id))
     plan.run_id = run.id
     plan.status = "ready"
     plan.destination = draft.destination or (group.destination if group else None)
@@ -141,13 +135,9 @@ async def persist_draft(
                 details={"source": "agent_map_point", "index": index},
             ) from exc
         if kind not in {"origin", "destination", "stop"}:
-            raise APIError(
-                422, "validation_error", details={"source": "agent_map_point_kind"}
-            )
+            raise APIError(422, "validation_error", details={"source": "agent_map_point_kind"})
         if not -90 <= lat <= 90 or not -180 <= lng <= 180:
-            raise APIError(
-                422, "validation_error", details={"source": "agent_map_coordinates"}
-            )
+            raise APIError(422, "validation_error", details={"source": "agent_map_coordinates"})
         point = PlanMapPoint(
             plan_id=plan.id,
             name=name,
@@ -389,9 +379,7 @@ async def fail_run(db: AsyncSession, run: Run, error: APIError) -> None:
         "error",
         {"run_id": run.id, "error": {"code": error.code, "message": message(error.code)}},
     )
-    await append_event(
-        db, run.id, "run_status", {"run_id": run.id, "status": "error"}
-    )
+    await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "error"})
 
 
 async def execute_run(run_id: str) -> None:
@@ -412,11 +400,7 @@ async def execute_run(run_id: str) -> None:
                 "locale": run.input_payload.get("locale", settings.default_locale),
                 **({"thread_id": session.thread_id} if session and session.thread_id else {}),
                 **({"group_id": session.group_id} if session and session.group_id else {}),
-                **(
-                    {"active_plan_id": run.active_plan_id}
-                    if run.active_plan_id
-                    else {}
-                ),
+                **({"active_plan_id": run.active_plan_id} if run.active_plan_id else {}),
             }
             if run.mode in {"new_trip", "qa"}:
                 payload["message"] = run.input_payload["message"]
@@ -427,6 +411,8 @@ async def execute_run(run_id: str) -> None:
             try:
                 created = await client.create_run(payload, run.correlation_id)
                 run.agent_run_id = created.agent_run_id
+                run.agent_thread_id = created.thread_id
+                run.agent_stream_url = created.stream_url
                 if session:
                     session.thread_id = created.thread_id
                 run.status = "running"
