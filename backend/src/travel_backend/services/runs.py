@@ -359,15 +359,27 @@ async def persist_draft(
 
 async def save_assistant_message(
     db: AsyncSession, run: Run, content: str, agent_message_id: str | None = None
-) -> None:
-    entity = Message(
-        agent_message_id=agent_message_id,
-        session_id=run.session_id,
-        run_id=run.id,
-        role="assistant",
-        content=content,
-    )
-    db.add(entity)
+) -> Message:
+    entity = None
+    if agent_message_id:
+        entity = await db.scalar(
+            select(Message).where(
+                Message.run_id == run.id,
+                Message.agent_message_id == agent_message_id,
+                Message.role == "assistant",
+            )
+        )
+    if entity is None:
+        entity = Message(
+            agent_message_id=agent_message_id,
+            session_id=run.session_id,
+            run_id=run.id,
+            role="assistant",
+            content=content,
+        )
+        db.add(entity)
+    else:
+        entity.content = content
     await db.flush()
     await append_event(
         db,
@@ -384,6 +396,41 @@ async def save_assistant_message(
             },
         },
     )
+    return entity
+
+
+async def append_assistant_delta(
+    db: AsyncSession, run: Run, agent_message_id: str, delta: str
+) -> None:
+    entity = await db.scalar(
+        select(Message).where(
+            Message.run_id == run.id,
+            Message.agent_message_id == agent_message_id,
+            Message.role == "assistant",
+        )
+    )
+    if entity is None:
+        entity = Message(
+            agent_message_id=agent_message_id,
+            session_id=run.session_id,
+            run_id=run.id,
+            role="assistant",
+            content=delta,
+        )
+        db.add(entity)
+    else:
+        entity.content += delta
+    await db.flush()
+    await append_event(
+        db,
+        run.id,
+        "message_delta",
+        {
+            "run_id": run.id,
+            "message_id": entity.id,
+            "delta": delta,
+        },
+    )
 
 
 async def process_agent_event(
@@ -393,16 +440,7 @@ async def process_agent_event(
     if event_name == "observability":
         return
     if event_name == "message_delta":
-        await append_event(
-            db,
-            run.id,
-            "message_delta",
-            {
-                "run_id": run.id,
-                "message_id": data["message_id"],
-                "delta": data["delta"],
-            },
-        )
+        await append_assistant_delta(db, run, data["message_id"], data["delta"])
     elif event_name == "message":
         source = data["message"]
         await save_assistant_message(db, run, source["content"], source.get("id"))
@@ -480,6 +518,8 @@ async def fail_run(db: AsyncSession, run: Run, error: APIError) -> None:
     run.status = "error"
     run.error_code = error.code
     run.finished_at = utcnow()
+    locale = run_locale(run)
+    error_message = safe_message(error.code, locale)
     if run.active_plan_id:
         plan = await db.get(Plan, run.active_plan_id)
         if plan and plan.status == "building":
@@ -492,14 +532,14 @@ async def fail_run(db: AsyncSession, run: Run, error: APIError) -> None:
                     "run_id": run.id,
                     "plan_id": plan.id,
                     "status": "error",
-                    "error": message(error.code),
+                    "error": error_message,
                 },
             )
     await append_event(
         db,
         run.id,
         "error",
-        {"run_id": run.id, "error": {"code": error.code, "message": message(error.code)}},
+        {"run_id": run.id, "error": {"code": error.code, "message": error_message}},
     )
     await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "error"})
 

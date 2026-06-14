@@ -121,6 +121,45 @@ class TimeoutAgentClient(SuccessfulAgentClient):
         raise APIError(504, "timeout")
 
 
+class DeltaStreamingAgentClient(SuccessfulAgentClient):
+    async def stream(
+        self,
+        stream_url: str,
+        correlation_id: str,
+        last_event_id: str | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        assert self.agent_run_id
+        assert self.agent_message_id
+        for delta in ("Hello ", "world"):
+            yield AgentEvent(
+                event="message_delta",
+                data={
+                    "agent_run_id": self.agent_run_id,
+                    "message_id": self.agent_message_id,
+                    "delta": delta,
+                },
+            )
+        yield AgentEvent(
+            event="message",
+            data={
+                "agent_run_id": self.agent_run_id,
+                "message": {
+                    "id": self.agent_message_id,
+                    "role": "assistant",
+                    "content": "Hello world",
+                },
+            },
+        )
+        yield AgentEvent(
+            event="run_status",
+            data={
+                "agent_run_id": self.agent_run_id,
+                "status": "completed",
+                "outcome": "recommendation",
+            },
+        )
+
+
 class CancelAgentClient:
     cancelled: tuple[str, str] | None = None
 
@@ -287,6 +326,73 @@ async def test_invalid_agent_plan_is_not_persisted(client, unique_email, monkeyp
         assert count == 0
 
 
+async def test_streamed_assistant_message_uses_one_backend_owned_id(
+    client,
+    unique_email,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "travel_backend.services.runs.AgentServiceClient",
+        DeltaStreamingAgentClient,
+    )
+    _, headers = await register_user(client, unique_email)
+    response = await client.post(
+        "/api/v1/chat",
+        headers=headers,
+        json={"message": "Stream a reply"},
+    )
+    assert response.status_code == 202
+    run_id = response.json()["run_id"]
+    agent_message_id = f"message-{run_id}"
+
+    async with SessionFactory() as db:
+        messages = (
+            await db.scalars(
+                select(Message).where(
+                    Message.run_id == run_id,
+                    Message.agent_message_id == agent_message_id,
+                )
+            )
+        ).all()
+        assert len(messages) == 1
+        persisted_message = messages[0]
+        assert persisted_message.id != agent_message_id
+        assert persisted_message.content == "Hello world"
+        events = (
+            await db.scalars(
+                select(RunEvent)
+                .where(
+                    RunEvent.run_id == run_id,
+                    RunEvent.event_name.in_(("message_delta", "message")),
+                )
+                .order_by(RunEvent.sequence)
+            )
+        ).all()
+
+    assert [event.event_name for event in events] == [
+        "message_delta",
+        "message_delta",
+        "message",
+    ]
+    frontend_ids = [
+        events[0].payload["message_id"],
+        events[1].payload["message_id"],
+        events[2].payload["message"]["id"],
+    ]
+    assert frontend_ids == [persisted_message.id] * 3
+
+    session = await client.get(
+        f"/api/v1/sessions/{response.json()['session_id']}",
+        headers=headers,
+    )
+    assistant_messages = [
+        item for item in session.json()["messages"] if item["role"] == "assistant"
+    ]
+    assert len(assistant_messages) == 1
+    assert assistant_messages[0]["id"] == persisted_message.id
+    assert "agent_message_id" not in assistant_messages[0]
+
+
 async def test_modify_starts_agent_run_with_route_edits_and_active_plan(
     client,
     unique_email,
@@ -352,6 +458,37 @@ async def test_agent_timeout_marks_run_failed_and_emits_safe_russian_error(
         assert error_event.payload["error"]["message"] == (
             "Сервис планирования не ответил вовремя."
         )
+
+
+async def test_agent_timeout_uses_run_english_locale(
+    client,
+    unique_email,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "travel_backend.services.runs.AgentServiceClient",
+        TimeoutAgentClient,
+    )
+    _, headers = await register_user(client, unique_email)
+    response = await client.post(
+        "/api/v1/chat",
+        headers={**headers, "Accept-Language": "en-US"},
+        json={"message": "Plan a trip"},
+    )
+    assert response.status_code == 202
+    async with SessionFactory() as db:
+        run = await db.get(Run, response.json()["run_id"])
+        assert run.input_payload["locale"] == "en-US"
+        error_event = await db.scalar(
+            select(RunEvent).where(
+                RunEvent.run_id == run.id,
+                RunEvent.event_name == "error",
+            )
+        )
+        assert error_event.payload["error"] == {
+            "code": "timeout",
+            "message": "The planning service did not respond in time.",
+        }
 
 
 async def test_cancel_calls_agent_service_when_mapping_exists(

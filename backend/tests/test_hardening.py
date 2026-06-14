@@ -18,7 +18,7 @@ from travel_backend.models import (
     TravelGroup,
     User,
 )
-from travel_backend.services.runs import process_agent_event
+from travel_backend.services.runs import fail_run, process_agent_event
 
 PROTECTED_ROUTES = [
     ("POST", "/api/v1/auth/logout", {"refresh_token": "x" * 20}),
@@ -356,3 +356,48 @@ async def test_plan_status_gates_accept_modify_and_map_editing(client, unique_em
     map_response = await client.get(f"/api/v1/plans/{plan_id}/map", headers=headers)
     assert map_response.status_code == 200
     assert map_response.json()["editable"] is False
+
+
+async def test_building_plan_failure_uses_run_locale(client, unique_email):
+    await register_user(client, unique_email)
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        session = ChatSession(user_id=user.id, summary="English plan failure")
+        db.add(session)
+        await db.flush()
+        run = Run(
+            session_id=session.id,
+            user_id=user.id,
+            correlation_id=str(uuid4()),
+            mode="qa",
+            status="running",
+            input_payload={"message": "test", "locale": "en-US"},
+        )
+        db.add(run)
+        await db.flush()
+        plan = Plan(
+            user_id=user.id,
+            session_id=session.id,
+            run_id=run.id,
+            status="building",
+        )
+        db.add(plan)
+        await db.flush()
+        run.active_plan_id = plan.id
+
+        await fail_run(db, run, APIError(422, "validation_error"))
+        await db.commit()
+        events = (
+            await db.scalars(
+                select(RunEvent)
+                .where(
+                    RunEvent.run_id == run.id,
+                    RunEvent.event_name.in_(("plan_status", "error")),
+                )
+                .order_by(RunEvent.sequence)
+            )
+        ).all()
+
+    assert plan.status == "error"
+    assert events[0].payload["error"] == "Check the submitted data."
+    assert events[1].payload["error"]["message"] == "Check the submitted data."

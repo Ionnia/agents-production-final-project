@@ -24,7 +24,8 @@ runtime implementation lives in the installable `travel_backend` package.
 - Validation and hydration of every agent-proposed draft before persistence.
 - Backend-owned UUIDs for persisted messages. Optional Agent Service message IDs are retained in a
   private `agent_message_id` column for correlation and never become database primary keys or
-  frontend message IDs.
+  frontend message IDs. Streamed deltas and the corresponding final message share the same
+  backend-owned message ID.
 - Russian user-facing messages by default, with a basic `en-US` fallback.
 
 ## Persistence and seed data
@@ -45,7 +46,8 @@ service-token defaults.
 
 Each backend run owns a persistent ordered event log. Frontend SSE replays events after
 `Last-Event-ID` and closes after a terminal run status. Stream tickets are stored only as SHA-256
-hashes, expire before first use, and receive a short reconnect lease after consumption.
+hashes, expire before first use, receive a short reconnect lease after consumption, and are
+validated against the owning user recorded on the run before they are consumed.
 
 Agent `ready` events are not forwarded directly. The backend loads referenced offers, recalculates
 cost, applies hard constraints, writes the plan/map/calendar atomically, and only then emits
@@ -59,6 +61,9 @@ vocabulary is limited to the seven event types frozen in `api/openapi.yaml`.
 Agent HTTP calls and SSE reads execute without an open SQLAlchemy session. Run payload loading,
 agent mapping, each semantic event, terminal-state handling, and failure handling use separate
 short-lived transactions while preserving sequential event ordering.
+
+Backend-generated run failure messages, including plan failure events, use the locale captured
+when the run was created. Russian remains the default and `en-US` is supported.
 
 ## Security and verification
 
