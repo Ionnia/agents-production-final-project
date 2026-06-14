@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { FlightSel, HotelSel, TourSel } from '../../api/types'
-const props = defineProps<{ flight?: FlightSel; hotel?: HotelSel; tour?: TourSel }>()
+defineProps<{ flight?: FlightSel; hotel?: HotelSel; tour?: TourSel }>()
 const rub = (n?: number) => (n == null ? '' : n.toLocaleString('ru-RU') + ' ₽')
 </script>
 <template>

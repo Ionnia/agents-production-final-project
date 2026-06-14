@@ -11,7 +11,7 @@ const days = computed(() => {
   }
   return [...map.entries()]
 })
-const fmtDay = (d: string) => new Date(d).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' })
+const fmtDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('ru-RU', { weekday: 'short', day: 'numeric', month: 'long' })
 const fmtTime = (s?: string) => (s ? new Date(s).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : '')
 </script>
 

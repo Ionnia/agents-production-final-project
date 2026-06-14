@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useSessionsStore } from '../../stores/sessions'
 import Skeleton from '../ui/Skeleton.vue'
@@ -7,15 +7,15 @@ import EmptyState from '../ui/EmptyState.vue'
 const sessions = useSessionsStore()
 const props = defineProps<{ filter: string }>()
 const emit = defineEmits<{ navigate: [] }>()
+const filtered = computed(() => sessions.list.filter(s => s.summary.toLowerCase().includes(props.filter.toLowerCase())))
 onMounted(() => { if (!sessions.list.length) sessions.loadList() })
-function match(s: { summary: string }) { return s.summary.toLowerCase().includes(props.filter.toLowerCase()) }
 </script>
 <template>
   <div class="sect">
     <h4>История</h4>
     <template v-if="sessions.loading && !sessions.list.length"><Skeleton v-for="i in 3" :key="i" h="32px" /></template>
     <EmptyState v-else-if="!sessions.list.length" title="Пока нет чатов" />
-    <RouterLink v-for="s in sessions.list.filter(match)" :key="s.id" class="item" :to="`/c/${s.id}`" @click="emit('navigate')">
+    <RouterLink v-for="s in filtered" :key="s.id" class="item" :to="`/c/${s.id}`" @click="emit('navigate')">
       💬 <span class="lbl">{{ s.summary }}</span>
     </RouterLink>
   </div>

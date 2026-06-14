@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { usePlansStore } from '../../stores/plans'
-const props = defineProps<{ planId: string; editable: boolean }>()
+const props = defineProps<{ planId: string }>()
 const emit = defineEmits<{ rebuild: [runId: string] }>()
 const plans = usePlansStore()
+const editable = computed(() => plans.map?.editable ?? false)
 const newPoint = ref('')
 function add() { if (newPoint.value.trim()) { plans.stageAdd(newPoint.value.trim()); newPoint.value = '' } }
 async function submit() { const runId = await plans.modify(props.planId); emit('rebuild', runId) }

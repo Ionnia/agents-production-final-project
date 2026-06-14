@@ -1,23 +1,25 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useEventListener } from '@vueuse/core'
 import SessionList from './SessionList.vue'
 import GroupList from './GroupList.vue'
 import PlanList from './PlanList.vue'
 import { useChatStore } from '../../stores/chat'
 import { useAuthStore } from '../../stores/auth'
 
-defineProps<{ open: boolean }>()
+const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const router = useRouter(); const chat = useChatStore(); const auth = useAuthStore()
 const filter = ref('')
+useEventListener(window, 'keydown', (e) => { if (props.open && e.key === 'Escape') emit('close') })
 function newChat() { chat.reset(); router.push('/'); emit('close') }
 async function logout() { await auth.logout(); router.push('/login') }
 </script>
 
 <template>
   <transition name="slide">
-    <aside v-show="open" class="panel glass" @keydown.esc="emit('close')">
+    <aside v-show="open" class="panel glass">
       <div class="title">Маршруты</div>
       <button class="newchat" @click="newChat">＋ Новый чат</button>
       <input v-model="filter" class="search" placeholder="Поиск по чатам…" />

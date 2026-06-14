@@ -31,7 +31,7 @@ async function submit() {
       <button class="submit" :disabled="busy">{{ busy ? '…' : (mode === 'login' ? 'Войти' : 'Зарегистрироваться') }}</button>
       <p class="alt">
         {{ mode === 'login' ? 'Нет аккаунта?' : 'Уже есть аккаунт?' }}
-        <a href="#" @click.prevent="mode = mode === 'login' ? 'register' : 'login'">{{ mode === 'login' ? 'Регистрация' : 'Вход' }}</a>
+        <button type="button" class="link" @click="mode = mode === 'login' ? 'register' : 'login'">{{ mode === 'login' ? 'Регистрация' : 'Вход' }}</button>
       </p>
     </form>
   </div>
@@ -46,5 +46,5 @@ h1 { margin: 0 0 6px; font-size: 24px; color: #1c150f; }
 .submit { margin-top: 4px; padding: 12px; border: none; border-radius: 12px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
 .submit:disabled { opacity: .6; }
 .alt { font-size: 13px; color: var(--ink-soft); text-align: center; margin: 4px 0 0; }
-.alt a { color: var(--accent-press); font-weight: 600; }
+.alt .link { padding: 0; border: none; background: none; font: inherit; color: var(--accent-press); font-weight: 600; cursor: pointer; }
 </style>

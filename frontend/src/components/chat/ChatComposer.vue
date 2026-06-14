@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, watch, useTemplateRef } from 'vue'
+const props = defineProps<{ busy?: boolean }>()
 const model = defineModel<string>({ default: '' })
 const emit = defineEmits<{ submit: [text: string] }>()
 const ta = useTemplateRef<HTMLTextAreaElement>('ta')
@@ -15,7 +16,7 @@ watch(model, () => nextTick(autosize))
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); fire() }
 }
-function fire() { const t = model.value.trim(); if (t) { emit('submit', t); model.value = '' } }
+function fire() { if (props.busy) return; const t = model.value.trim(); if (t) { emit('submit', t); model.value = '' } }
 </script>
 
 <template>
@@ -23,7 +24,7 @@ function fire() { const t = model.value.trim(); if (t) { emit('submit', t); mode
     <div class="row">
       <textarea ref="ta" v-model="model" class="field" rows="1" placeholder="Спланируй путешествие…"
         autocomplete="off" spellcheck="false" @keydown="onKey" />
-      <button class="send" :disabled="!model.trim()" aria-label="Отправить" @click="fire">↑</button>
+      <button class="send" :disabled="!model.trim() || busy" aria-label="Отправить" @click="fire">↑</button>
     </div>
   </div>
 </template>

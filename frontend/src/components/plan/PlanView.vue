@@ -61,7 +61,7 @@ async function onRebuild() {
         <OfferCard v-if="plans.current.items.flight" :flight="plans.current.items.flight" />
         <OfferCard v-if="plans.current.items.hotel" :hotel="plans.current.items.hotel" />
         <OfferCard v-if="plans.current.items.tour" :tour="plans.current.items.tour" />
-        <PlanEditBar :plan-id="planId" :editable="plans.map?.editable ?? false" @rebuild="onRebuild" />
+        <PlanEditBar :plan-id="planId" @rebuild="onRebuild" />
         <div class="actions">
           <button class="accept" :disabled="plans.current.status !== 'ready'" @click="accept">Принять</button>
           <button class="reject" @click="reject">Отклонить</button>

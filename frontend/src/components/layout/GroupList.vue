@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useGroupsStore } from '../../stores/groups'
 import EmptyState from '../ui/EmptyState.vue'
 const groups = useGroupsStore()
-defineProps<{ filter: string }>()
+const props = defineProps<{ filter: string }>()
+const filtered = computed(() => groups.list.filter(g => g.name.toLowerCase().includes(props.filter.toLowerCase())))
 onMounted(() => { if (!groups.list.length) groups.loadList() })
 </script>
 <template>
   <div class="sect">
     <h4>Группы</h4>
     <EmptyState v-if="!groups.list.length" title="Нет групп" hint="Создайте группу путешественников" />
-    <div v-for="g in groups.list.filter(g => g.name.toLowerCase().includes(filter.toLowerCase()))" :key="g.id" class="item">
+    <div v-for="g in filtered" :key="g.id" class="item">
       👥 <span class="lbl">{{ g.name }}</span> <small>{{ g.member_count }}</small>
     </div>
   </div>

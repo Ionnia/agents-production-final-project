@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { api, client } from '../api/endpoints'
 import { streamRun } from '../api/sse'
+import { useToasts } from '../composables/useToasts'
 import type { Message, ClarifyingQuestion, PlanBuildStatus, ChatRequest } from '../api/types'
 
 interface UiMessage extends Pick<Message, 'id' | 'role' | 'content'> { streaming?: boolean }
@@ -21,22 +22,28 @@ export const useChatStore = defineStore('chat', () => {
   async function startRun(req: ChatRequest) {
     running.value = true; pendingQuestion.value = null
     runDone = (async () => {
-      const acc = await api.chat(req); sessionId.value = acc.session_id
-      const { ticket } = await api.streamTicket(acc.run_id)
       let assistant: UiMessage | null = null
-      for await (const ev of streamRun({ baseUrl: client.baseUrl, runId: acc.run_id, ticket })) {
-        if (ev.event === 'message_delta') {
-          if (!assistant) { assistant = { id: ev.data.message_id, role: 'assistant', content: '', streaming: true }; messages.value.push(assistant) }
-          assistant.content += ev.data.delta
-        } else if (ev.event === 'message') {
-          if (assistant) { assistant.content = ev.data.message.content; assistant.streaming = false }
-          if (ev.data.message.plan_ref) planId.value = ev.data.message.plan_ref.plan_id
-        } else if (ev.event === 'clarifying_question') { pendingQuestion.value = ev.data.question }
-        else if (ev.event === 'plan_status') { planStatus.value = ev.data.status; planId.value = ev.data.plan_id }
-        else if (ev.event === 'run_status' && (ev.data.status === 'completed' || ev.data.status === 'error' || ev.data.status === 'cancelled')) break
+      try {
+        const acc = await api.chat(req); sessionId.value = acc.session_id
+        const { ticket } = await api.streamTicket(acc.run_id)
+        for await (const ev of streamRun({ baseUrl: client.baseUrl, runId: acc.run_id, ticket })) {
+          if (ev.event === 'message_delta') {
+            if (!assistant) { assistant = { id: ev.data.message_id, role: 'assistant', content: '', streaming: true }; messages.value.push(assistant) }
+            assistant.content += ev.data.delta
+          } else if (ev.event === 'message') {
+            if (assistant) { assistant.content = ev.data.message.content; assistant.streaming = false }
+            if (ev.data.message.plan_ref) planId.value = ev.data.message.plan_ref.plan_id
+          } else if (ev.event === 'clarifying_question') { pendingQuestion.value = ev.data.question }
+          else if (ev.event === 'plan_status') { planStatus.value = ev.data.status; planId.value = ev.data.plan_id }
+          else if (ev.event === 'run_status' && (ev.data.status === 'completed' || ev.data.status === 'error' || ev.data.status === 'cancelled')) break
+        }
+      } catch {
+        planStatus.value = 'error'
+        useToasts().push({ kind: 'error', text: 'Не удалось получить ответ. Попробуйте ещё раз.' })
+      } finally {
+        running.value = false
+        if (assistant) assistant.streaming = false
       }
-      if (assistant) assistant.streaming = false
-      running.value = false
     })()
     return runDone
   }

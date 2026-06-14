@@ -5,9 +5,10 @@ import ChatComposer from './ChatComposer.vue'
 import MessageList from './MessageList.vue'
 import { useChatStore } from '../../stores/chat'
 import { useSessionsStore } from '../../stores/sessions'
+import { useToasts } from '../../composables/useToasts'
 
 const props = defineProps<{ sessionId?: string }>()
-const chat = useChatStore(); const sessions = useSessionsStore(); const router = useRouter()
+const chat = useChatStore(); const sessions = useSessionsStore(); const router = useRouter(); const { push } = useToasts()
 const draft = ref('')
 const started = computed(() => chat.messages.length > 0)
 
@@ -21,10 +22,16 @@ watch(() => props.sessionId, async (id) => {
 })
 
 async function onSubmit(text: string) {
-  await chat.send(text)
-  if (chat.sessionId && !props.sessionId) router.replace(`/c/${chat.sessionId}`)
+  if (chat.running) return
+  try {
+    await chat.send(text)
+    if (chat.sessionId && !props.sessionId) router.replace(`/c/${chat.sessionId}`)
+  } catch {
+    push({ kind: 'error', text: 'Не удалось получить ответ. Попробуйте ещё раз.' })
+  }
 }
 function onAnswer(optionIds: string[], freeform?: string) {
+  if (chat.running) return
   if (chat.pendingQuestion) chat.answer(chat.pendingQuestion.id, optionIds, freeform)
 }
 </script>
@@ -43,7 +50,7 @@ function onAnswer(optionIds: string[], freeform?: string) {
     </div>
 
     <div class="composer-slot" :class="{ bottom: started }">
-      <ChatComposer v-model="draft" @submit="onSubmit" />
+      <ChatComposer v-model="draft" :busy="chat.running" @submit="onSubmit" />
     </div>
   </div>
 </template>

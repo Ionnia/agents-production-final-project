@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, useTemplateRef } from 'vue'
+import { useTemplateRef } from 'vue'
 import { useCursorLens, LENS_GRADIENT } from '../../composables/useCursorLens'
 
 const SCENES = ['france', 'greece', 'italy', 'japan', 'china', 'india', 'russia', 'usa'] as const
@@ -9,12 +9,11 @@ const color = `/backgrounds/${scene}-color.webp`
 
 const colorEl = useTemplateRef<HTMLImageElement>('colorEl')
 useCursorLens(() => colorEl.value)
-const loaded = ref(false)
 </script>
 
 <template>
   <div class="bg" aria-hidden="true">
-    <img class="layer" :src="base" alt="" @load="loaded = true" />
+    <img class="layer" :src="base" alt="" />
     <img ref="colorEl" class="layer color" :src="color" alt="" :style="{ '--lens': LENS_GRADIENT }" />
   </div>
 </template>

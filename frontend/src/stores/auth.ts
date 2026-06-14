@@ -26,10 +26,11 @@ export const useAuthStore = defineStore('auth', () => {
   async function restore() {
     ready.value = true
     const raw = localStorage.getItem(LS); if (!raw) return
-    const { refreshToken: rt } = JSON.parse(raw) as { refreshToken: string | null }
-    if (!rt) return
-    try { const r = await api.refresh(rt); accessToken.value = r.access_token; refreshToken.value = r.refresh_token; persist(); user.value = await api.me() }
-    catch { localStorage.removeItem(LS) }
+    try {
+      const { refreshToken: rt } = JSON.parse(raw) as { refreshToken: string | null }
+      if (!rt) return
+      const r = await api.refresh(rt); accessToken.value = r.access_token; refreshToken.value = r.refresh_token; persist(); user.value = await api.me()
+    } catch { localStorage.removeItem(LS) }
   }
   async function logout() {
     if (refreshToken.value) { try { await api.logout(refreshToken.value) } catch {} }
