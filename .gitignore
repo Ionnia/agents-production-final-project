@@ -99,3 +99,10 @@ mas_predictions.jsonl
 mas_predictions2.jsonl
 langgraph_predictions.jsonl
 data/indexes/
+
+# README assets: keep heavy 4K originals + source/encoded video out of git history.
+# Only the compressed docs/readme_assets/*.webp artifacts are committed.
+docs/readme_assets/*.png
+docs/readme_assets/*.mov
+docs/readme_assets/*.mp4
+docs/readme_assets/*.log
