@@ -5,8 +5,9 @@
   --ink: #241c14;                 /* text on frosted glass */
   --ink-soft: rgba(40, 30, 20, 0.55);
 
-  /* locked glass spec: white 38% · blur 10px · saturate 100% · no border */
-  --glass-bg: rgba(255, 255, 255, 0.38);
+  /* glass spec: newspaper-white 60% · blur 10px · saturate 100% · no border
+     (warm off-white, opaque enough to keep dark ink readable over dark bg) */
+  --glass-bg: rgba(247, 243, 235, 0.6);
   --glass-blur: 10px;
   --glass-saturate: 1;
   --glass-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);

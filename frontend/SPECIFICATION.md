@@ -40,7 +40,7 @@ pnpm gen:api        # regenerate src/api/schema.d.ts from ../api/openapi.yaml
 
 Single token defined in `src/styles/glass.css`, imported by `src/style.css`:
 
-- `.glass` — `background: rgba(255,255,255,0.38)`, `backdrop-filter: blur(10px) saturate(1)`, `box-shadow: 0 18px 50px rgba(0,0,0,0.35)`. No border. This is the only frosted-glass surface variant.
+- `.glass` — `background: rgba(247,243,235,0.6)` (warm newspaper-white at 60% so dark `--ink` text stays readable over dark scenes), `backdrop-filter: blur(10px) saturate(1)`, `box-shadow: 0 18px 50px rgba(0,0,0,0.35)`. No border. This is the only frosted-glass surface variant.
 - `.glass-dark` — darker variant for toasts/controls that sit on light frost.
 - CSS custom properties: `--accent` / `--accent-press` (default terracotta #d97757 / #cf5f3f, overridden at runtime by `DitheredBackground` to match the active scene), `--bg-base` (#0c0a08), `--ink` (#241c14), `--ink-soft` (rgba(40,30,20,0.55)), plus the glass spec vars.
 - Interaction tokens: `--ease` (shared easing), `--tap` (the standard control transition), `--accent-glow` / `--accent-glow-press` (hover/pressed shadows, derived from `--accent` via `color-mix` so they follow the scene accent). All interactive controls use these for a uniform hover (lift + brightness + shadow) and pressed (`scale .97`) feel, guarded by `@media (hover: hover)` and `:not(:disabled)`.
@@ -155,7 +155,7 @@ Login/register form (tab-switched). On success navigates to the `redirect` query
 
 ### Plan view (`src/components/plan/`)
 
-- **`PlanView.vue`** — fixed full-screen layout: sticky header (back button + destination + status), two-column grid (map/itinerary pane left, details right; stacks on ≤ 860 px). Loads plan + map + calendar on mount.
+- **`PlanView.vue`** — fixed full-screen layout: sticky header (back button + destination + status), two-column grid (map/itinerary pane left, details right; stacks on ≤ 860 px). Loads plan + map + calendar on mount. The **Принять / Отклонить** (accept/reject) actions render only while `status === 'ready'`; once the plan is accepted or rejected the buttons disappear and the status badge conveys the outcome.
 - **`MapView.vue`** — MapLibre GL canvas rendering `MapPoint[]` as accent-coloured pin markers with popups, plus a dashed accent route line. Basemap is CARTO's free (no-API-key) **vector** dark style; on load every symbol layer's `text-field` is rewritten to `coalesce(name:ru, name)` so map labels display in Russian. Plan status text is localised via `utils/planStatus.ts` (`planStatusLabel`), shared with the side-panel `PlanList`.
 - **`ItineraryView.vue`** — day-grouped list of `CalendarEvent[]` with time, title, location, and notes (description). `CalendarEvent` carries no price field, so none is shown.
 - **`OfferCard.vue`** — renders a `FlightSel`, `HotelSel`, or `TourSel` in a glass card.

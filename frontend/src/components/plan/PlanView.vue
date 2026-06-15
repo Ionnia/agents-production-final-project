@@ -63,8 +63,8 @@ async function onRebuild() {
         <OfferCard v-if="plans.current.items.hotel" :hotel="plans.current.items.hotel" />
         <OfferCard v-if="plans.current.items.tour" :tour="plans.current.items.tour" />
         <PlanEditBar :plan-id="planId" @rebuild="onRebuild" />
-        <div class="actions">
-          <button class="accept" :disabled="plans.current.status !== 'ready'" @click="accept">Принять</button>
+        <div v-if="plans.current.status === 'ready'" class="actions">
+          <button class="accept" @click="accept">Принять</button>
           <button class="reject" @click="reject">Отклонить</button>
         </div>
       </aside>
@@ -99,7 +99,7 @@ h1 { margin: 0; font-size: 22px; color: #fff; text-shadow: 0 1px 12px rgba(0,0,0
 @media (hover: hover) { .accept:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--accent-glow); } }
 .accept:not(:disabled):active { transform: translateY(0) scale(.97); filter: brightness(.95); box-shadow: var(--accent-glow-press); }
 .accept:disabled { opacity: .5; cursor: default; transform: none; }
-.reject { padding: 12px 16px; border: none; border-radius: 12px; background: rgba(0,0,0,.12); color: var(--ink); cursor: pointer; transition: var(--tap); }
-@media (hover: hover) { .reject:hover { background: rgba(0,0,0,.18); transform: translateY(-1px); } }
+.reject { padding: 12px 16px; border: 1px solid rgba(36,28,20,.18); border-radius: 12px; background: rgba(247,243,235,.5); color: var(--ink); font-weight: 600; cursor: pointer; transition: var(--tap); }
+@media (hover: hover) { .reject:hover { background: rgba(247,243,235,.72); border-color: rgba(36,28,20,.28); transform: translateY(-1px); } }
 .reject:active { transform: translateY(0) scale(.97); }
 </style>
