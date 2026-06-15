@@ -23,7 +23,7 @@ watch(() => [props.messages.map(m => m.content).join(''), props.question, props.
 <template>
   <div ref="box" class="list">
     <MessageBubble v-for="m in messages" :key="m.id" :role="m.role" :content="m.content" :streaming="m.streaming" :created-at="m.created_at" />
-    <div v-if="thinking" class="thinking" role="status" aria-label="Агент думает">
+    <div v-if="thinking" class="thinking glass" role="status" aria-label="Агент думает">
       <span class="d" /><span class="d" /><span class="d" />
     </div>
     <PlanStatus v-if="planStatus" :status="planStatus" :plan-id="planId" />
@@ -32,8 +32,14 @@ watch(() => [props.messages.map(m => m.content).join(''), props.question, props.
 </template>
 
 <style scoped>
-.list { display: flex; flex-direction: column; gap: 13px; overflow: auto; height: 100%; padding: 4px 2px; }
-.thinking { align-self: flex-start; display: flex; gap: 5px; align-items: center; padding: 13px 16px; }
+/* Full-width scroller: horizontal padding centres a 720px content column while the
+   scrollbar stays at the screen edge. Note: no mask/filter here — that would make this
+   a backdrop root and kill the bubbles' backdrop-filter. The composer matches this
+   720px / 14px-gutter span so its edges line up with the bubbles' outer edges. */
+.list { display: flex; flex-direction: column; gap: 13px; overflow: auto; height: 100%;
+  padding: 6px max(14px, calc((100% - 720px) / 2)); }
+.thinking { align-self: flex-start; display: flex; gap: 5px; align-items: center; padding: 12px 16px;
+  border-radius: 18px 18px 18px 6px; box-shadow: var(--bubble-shadow); }
 .thinking .d { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); opacity: .35; animation: bob 1.2s infinite ease-in-out; }
 .thinking .d:nth-child(2) { animation-delay: .2s; }
 .thinking .d:nth-child(3) { animation-delay: .4s; }

@@ -21,14 +21,14 @@ function sendFree() { if (freeform.value.trim()) emit('answer', [], freeform.val
 </template>
 <style scoped>
 .q { align-self: flex-start; max-width: 90%; display: flex; flex-direction: column; gap: 8px; }
-.qt { margin: 0; padding: 12px 15px; border-radius: 18px 18px 18px 6px; }
+.qt { margin: 0; padding: 12px 15px; border-radius: 18px 18px 18px 6px; box-shadow: var(--bubble-shadow); }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip { padding: 8px 14px; border: none; border-radius: 999px; cursor: pointer; color: var(--ink); font: inherit; font-size: 13.5px; transition: var(--tap); }
+.chip { padding: 8px 14px; border: none; border-radius: 999px; cursor: pointer; color: var(--ink); font: inherit; font-size: 13.5px; box-shadow: var(--bubble-shadow); transition: var(--tap); }
 @media (hover: hover) { .chip:not(:disabled):hover { filter: brightness(1.05); transform: translateY(-1px); } }
 .chip:not(:disabled):active { transform: translateY(0) scale(.97); }
 .chip:disabled { transform: none; }
 .free { display: flex; gap: 8px; }
-.fi { flex: 1; padding: 9px 13px; border: none; border-radius: 999px; color: var(--ink); font: inherit; }
+.fi { flex: 1; padding: 9px 13px; border: none; border-radius: 999px; color: var(--ink); font: inherit; box-shadow: var(--bubble-shadow); }
 .fi::placeholder { color: var(--ink-soft); }
 .go { width: 38px; border: none; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; transition: var(--tap); }
 @media (hover: hover) { .go:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--accent-glow); } }

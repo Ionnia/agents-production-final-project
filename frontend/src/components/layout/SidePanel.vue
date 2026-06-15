@@ -57,7 +57,9 @@ async function logout() { emit('close'); await auth.logout(); router.push('/logi
 .newchat:disabled { transform: none; }
 .search { padding: 9px 12px; border: none; border-radius: 11px; background: rgba(255,255,255,.4); color: var(--ink); font-size: 13.5px; }
 .search::placeholder { color: var(--ink-soft); }
-.scroll { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+/* No shared scrollbar: each section scrolls on its own. Groups/Plans cap their
+   own height; the History section grows to fill and scrolls internally. */
+.scroll { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 6px; }
 .logout { padding: 9px; border: none; border-radius: 10px; background: rgba(0,0,0,.08); color: #3a3024; cursor: pointer; transition: var(--tap); }
 @media (hover: hover) { .logout:hover { background: rgba(0,0,0,.14); transform: translateY(-1px); } }
 .logout:active { transform: translateY(0) scale(.97); }

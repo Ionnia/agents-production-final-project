@@ -31,7 +31,9 @@ function fire() { if (props.busy) return; const t = model.value.trim(); if (t) {
 </template>
 
 <style scoped>
-.composer { width: min(680px, 92%); border-radius: 90px / 18px; padding: 6px; }
+/* Match the message column span (720px centred, 14px gutters) so the composer's
+   edges line up with the outer edges of the chat bubbles. */
+.composer { width: min(720px, calc(100% - 28px)); border-radius: 90px / 18px; padding: 6px; }
 .row { display: flex; align-items: flex-end; gap: 10px; padding: 9px 12px; }
 .field { flex: 1; resize: none; border: none; background: transparent; color: var(--ink); font: inherit; font-size: 16px; outline: none; padding: 8px; max-height: 160px; }
 .field::placeholder { color: var(--ink-soft); }

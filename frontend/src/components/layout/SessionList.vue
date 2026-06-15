@@ -24,16 +24,20 @@ function whenLabel(iso: string): string {
 <template>
   <div class="sect">
     <h4>История</h4>
-    <template v-if="sessions.loading && !sessions.list.length"><Skeleton v-for="i in 3" :key="i" h="32px" /></template>
-    <EmptyState v-else-if="!sessions.list.length" title="Пока нет чатов" />
-    <RouterLink v-for="s in filtered" :key="s.id" class="item" :to="`/c/${s.id}`" @click="emit('navigate')">
-      <span class="lbl">{{ s.summary }}</span>
-      <time class="when" :datetime="s.created_at">{{ whenLabel(s.created_at) }}</time>
-    </RouterLink>
+    <div class="items">
+      <template v-if="sessions.loading && !sessions.list.length"><Skeleton v-for="i in 3" :key="i" h="32px" /></template>
+      <EmptyState v-else-if="!sessions.list.length" title="Пока нет чатов" />
+      <RouterLink v-for="s in filtered" :key="s.id" class="item" :to="`/c/${s.id}`" @click="emit('navigate')">
+        <span class="lbl">{{ s.summary }}</span>
+        <time class="when" :datetime="s.created_at">{{ whenLabel(s.created_at) }}</time>
+      </RouterLink>
+    </div>
   </div>
 </template>
 <style scoped>
-.sect { display: flex; flex-direction: column; gap: 2px; }
+/* History fills the leftover panel space and scrolls within its own item list. */
+.sect { display: flex; flex-direction: column; gap: 2px; flex: 1; min-height: 0; }
+.items { flex: 1; display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; padding: 2px; }
 h4 { margin: 10px 4px 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: #2a2018; font-weight: 700; }
 .item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 7px 10px; border-radius: 9px; color: #3a3024; font-size: 14px; text-decoration: none; transition: var(--tap); }
 @media (hover: hover) { .item:hover { background: rgba(255,255,255,.4); } }

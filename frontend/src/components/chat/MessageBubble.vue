@@ -16,8 +16,8 @@ const time = computed(() => {
 </template>
 <style scoped>
 .msg { max-width: 80%; padding: 12px 15px; font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; }
-.user { align-self: flex-end; background: var(--accent); color: #fff; border-radius: 18px 18px 6px 18px; }
-.bot { align-self: flex-start; border-radius: 18px 18px 18px 6px; box-shadow: none; }
+.user { align-self: flex-end; background: var(--accent); color: #fff; border-radius: 18px 18px 6px 18px; box-shadow: var(--bubble-shadow); }
+.bot { align-self: flex-start; border-radius: 18px 18px 18px 6px; box-shadow: var(--bubble-shadow); }
 .caret { display: inline-block; width: 7px; height: 1.05em; margin-left: 2px; vertical-align: -2px; background: currentColor; animation: blink 1s steps(2) infinite; }
 .time { display: block; margin-top: 4px; font-size: 10.5px; line-height: 1; }
 .user .time { text-align: right; color: rgba(255,255,255,.8); }

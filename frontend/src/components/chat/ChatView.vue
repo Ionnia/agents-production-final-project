@@ -90,12 +90,14 @@ async function onAnswer(optionIds: string[], freeform?: string) {
 .hero h1 { font-size: 38px; font-weight: 600; letter-spacing: -.8px; margin: 0; color: #fff; text-shadow: 0 2px 4px rgba(0,0,0,.85), 0 4px 18px rgba(0,0,0,.7), 0 8px 40px rgba(0,0,0,.6); }
 .hero p { position: relative; isolation: isolate; width: fit-content; max-width: 94vw; margin: 12px auto 0; color: #e7ddcf; text-shadow: 0 1px 4px rgba(0,0,0,.7); }
 .hero p::before { content: ""; position: absolute; inset: -.5em -1em; z-index: -1; pointer-events: none; background: radial-gradient(ellipse at center, rgba(0,0,0,.55) 0%, rgba(0,0,0,.36) 50%, rgba(0,0,0,0) 78%); filter: blur(11px); }
-.thread { position: absolute; left: 50%; transform: translateX(-50%); top: 78px; bottom: 110px; width: min(720px, 92%); }
+/* Full-width so the scroll region (and its scrollbar) sits at the screen edge;
+   MessageList centres its own content column via horizontal padding. */
+.thread { position: absolute; left: 0; right: 0; top: 78px; bottom: 110px; }
 .composer-slot { position: absolute; left: 50%; transform: translateX(-50%); top: 48%; display: flex; justify-content: center; width: 100%; }
 /* Transition only when explicitly enabled (hero → first message); direct loads snap to the bottom. */
 .composer-slot.animate { transition: top .6s cubic-bezier(.55,.06,.12,1); }
 .composer-slot.bottom { top: calc(100% - 96px); }
 .hero-enter-active, .hero-leave-active { transition: opacity .35s, transform .35s; }
 .hero-enter-from, .hero-leave-to { opacity: 0; transform: translateY(-14px); }
-@media (max-width: 600px) { .hero h1 { font-size: 28px; } .thread { width: 94%; } }
+@media (max-width: 600px) { .hero h1 { font-size: 28px; } }
 </style>
