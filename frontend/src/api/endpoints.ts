@@ -32,6 +32,7 @@ export const api = {
   groupPreferences: (id: string) => client.get<GroupPreferences>(`/groups/${id}/preferences`),
   groupPlans: (id: string) => client.get<PlanList>(`/groups/${id}/plans`),
   // Plans
+  plans: () => client.get<PlanList>('/plans'),
   plan: (id: string) => client.get<Plan>(`/plans/${id}`),
   planMap: (id: string) => client.get<PlanMap>(`/plans/${id}/map`),
   planCalendar: (id: string) => client.get<PlanCalendar>(`/plans/${id}/calendar`),

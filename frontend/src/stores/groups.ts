@@ -9,5 +9,7 @@ export const useGroupsStore = defineStore('groups', () => {
   async function loadList() { list.value = (await api.groups()).items }
   async function load(id: string) { current.value = await api.group(id) }
   async function create(body: CreateGroupRequest) { const g = await api.createGroup(body); current.value = g; return g }
-  return { list, current, loadList, load, create }
+  // Drop the signed-in user's cached groups so the next user can't see them.
+  function reset() { list.value = []; current.value = null }
+  return { list, current, loadList, load, create, reset }
 })

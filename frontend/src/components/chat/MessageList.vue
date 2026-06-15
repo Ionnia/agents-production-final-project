@@ -7,23 +7,27 @@ import PlanCard from './PlanCard.vue'
 import type { ClarifyingQuestion as CQ } from '../../api/types'
 
 const props = defineProps<{
-  messages: { id: string; role: 'user' | 'assistant'; content: string; streaming?: boolean; created_at?: string }[]
+  messages: { id: string; role: 'user' | 'assistant'; content: string; streaming?: boolean; animate?: boolean; created_at?: string }[]
   question: CQ | null
   planStatus: 'building' | 'ready' | 'error' | null
   planId: string | null
   running?: boolean
+  replyStarted?: boolean
 }>()
-// Show the working indicator while a run is in flight and no text is streaming yet.
-const thinking = computed(() => props.running && !props.messages.some(m => m.streaming))
+// Show the working indicator while a run is in flight and this turn's reply hasn't
+// begun arriving yet (covers the live backend, which emits one final `message`
+// with no `message_delta` chunks — there is no `streaming` flag to wait on).
+const thinking = computed(() => props.running && !props.replyStarted)
 const emit = defineEmits<{ answer: [optionIds: string[], freeform?: string] }>()
 const box = useTemplateRef<HTMLElement>('box')
+function scrollToBottom() { nextTick(() => { if (box.value) box.value.scrollTop = box.value.scrollHeight }) }
 watch(() => [props.messages.map(m => m.content).join(''), props.question, props.planStatus, thinking.value],
-  () => nextTick(() => { if (box.value) box.value.scrollTop = box.value.scrollHeight }))
+  scrollToBottom)
 </script>
 
 <template>
   <div ref="box" class="list">
-    <MessageBubble v-for="m in messages" :key="m.id" :role="m.role" :content="m.content" :streaming="m.streaming" :created-at="m.created_at" />
+    <MessageBubble v-for="m in messages" :key="m.id" :role="m.role" :content="m.content" :streaming="m.streaming" :animate="m.animate" :created-at="m.created_at" @grow="scrollToBottom" />
     <div v-if="thinking" class="thinking glass" role="status" aria-label="Агент думает">
       <span class="d" /><span class="d" /><span class="d" />
     </div>

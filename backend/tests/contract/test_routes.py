@@ -33,6 +33,7 @@ def test_frozen_contract_routes_are_registered():
         ("GET", "/api/v1/groups/{group_id}/members"),
         ("GET", "/api/v1/groups/{group_id}/preferences"),
         ("GET", "/api/v1/groups/{group_id}/plans"),
+        ("GET", "/api/v1/plans"),
         ("GET", "/api/v1/plans/{plan_id}"),
         ("POST", "/api/v1/plans/{plan_id}/accept"),
         ("POST", "/api/v1/plans/{plan_id}/reject"),

@@ -5,7 +5,9 @@ import { streamRun } from '../api/sse'
 import { useToasts } from '../composables/useToasts'
 import type { Message, ClarifyingQuestion, PlanBuildStatus, ChatRequest, ChatAccepted } from '../api/types'
 
-interface UiMessage extends Pick<Message, 'id' | 'role' | 'content'> { streaming?: boolean; created_at?: string }
+// `animate` marks a fresh reply produced during the current run so the bubble
+// types it out; hydrated history and user messages render verbatim.
+interface UiMessage extends Pick<Message, 'id' | 'role' | 'content'> { streaming?: boolean; animate?: boolean; created_at?: string }
 
 export const useChatStore = defineStore('chat', () => {
   const sessionId = ref<string | null>(null)
@@ -14,13 +16,17 @@ export const useChatStore = defineStore('chat', () => {
   const planStatus = ref<PlanBuildStatus | null>(null)
   const planId = ref<string | null>(null)
   const running = ref(false)
+  // True once the current run's assistant reply has started arriving — gates the
+  // "thinking" indicator (the live backend may send one final `message` with no
+  // `message_delta` chunks, so we can't rely on a per-message streaming flag).
+  const replyStarted = ref(false)
   let runDone: Promise<void> = Promise.resolve()
   // Tracks the in-flight run so a new run / reset can cancel it. The token guards
   // a stale stream loop from mutating the store after it has been superseded.
   let controller: AbortController | null = null
   let runToken = 0
 
-  function cancelRun() { controller?.abort(); controller = null; runToken++; running.value = false }
+  function cancelRun() { controller?.abort(); controller = null; runToken++; running.value = false; replyStarted.value = false }
   function reset() { cancelRun(); sessionId.value = null; messages.value = []; pendingQuestion.value = null; planStatus.value = null; planId.value = null }
   function hydrate(id: string, msgs: Message[]) {
     cancelRun()
@@ -67,7 +73,7 @@ export const useChatStore = defineStore('chat', () => {
     cancelRun()
     const token = ++runToken
     const ctrl = controller = new AbortController()
-    running.value = true; pendingQuestion.value = null; planStatus.value = null; planId.value = null
+    running.value = true; replyStarted.value = false; pendingQuestion.value = null; planStatus.value = null; planId.value = null
     let acc: ChatAccepted
     try {
       acc = await api.chat(req)
@@ -89,16 +95,16 @@ export const useChatStore = defineStore('chat', () => {
           // A newer run or a reset has superseded this one — stop mutating shared state.
           if (token !== runToken) return
           if (ev.event === 'message_delta') {
-            hasAssistantReply = true
+            hasAssistantReply = true; replyStarted.value = true
             if (planStatus.value !== 'ready') planStatus.value = null
-            if (!assistant) assistant = pushMessage({ id: ev.data.message_id, role: 'assistant', content: '', streaming: true, created_at: new Date().toISOString() })
+            if (!assistant) assistant = pushMessage({ id: ev.data.message_id, role: 'assistant', content: '', streaming: true, animate: true, created_at: new Date().toISOString() })
             assistant.content += ev.data.delta
           } else if (ev.event === 'message') {
-            hasAssistantReply = true
+            hasAssistantReply = true; replyStarted.value = true
             if (planStatus.value !== 'ready') planStatus.value = null
             // The live backend may emit a single final `message` with no preceding
             // `message_delta` chunks, so create the bubble here if streaming never started.
-            if (!assistant) assistant = pushMessage({ id: ev.data.message.id, role: 'assistant', content: '' })
+            if (!assistant) assistant = pushMessage({ id: ev.data.message.id, role: 'assistant', content: '', animate: true })
             assistant.content = ev.data.message.content; assistant.streaming = false
             assistant.created_at = ev.data.message.created_at
             if (ev.data.message.plan_ref) planId.value = ev.data.message.plan_ref.plan_id
@@ -148,5 +154,5 @@ export const useChatStore = defineStore('chat', () => {
     return startRun({ session_id: sessionId.value ?? undefined, in_reply_to_question_id: questionId, selected_option_ids: optionIds, freeform })
   }
   const waitForIdle = () => runDone
-  return { sessionId, messages, pendingQuestion, planStatus, planId, running, reset, hydrate, send, answer, waitForIdle }
+  return { sessionId, messages, pendingQuestion, planStatus, planId, running, replyStarted, reset, hydrate, send, answer, waitForIdle }
 })

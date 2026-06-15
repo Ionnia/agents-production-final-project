@@ -1,7 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import MarkdownText from './MarkdownText.vue'
-const props = defineProps<{ role: 'user' | 'assistant'; content: string; streaming?: boolean; createdAt?: string }>()
+import { useTypewriter } from './useTypewriter'
+const props = defineProps<{ role: 'user' | 'assistant'; content: string; streaming?: boolean; createdAt?: string; animate?: boolean }>()
+const emit = defineEmits<{ grow: [] }>()
+// Live assistant replies type out chunk by chunk; user messages and hydrated
+// history (`animate` falsy) render their text verbatim.
+const { displayed, typing } = useTypewriter(() => props.content, { instant: !props.animate })
+const text = computed(() => (props.animate ? displayed.value : props.content))
+// Blinking caret while the reply is still typing out (live) or streaming in.
+const showCaret = computed(() => (props.animate ? typing.value : props.streaming))
+// Keep the scroller pinned to the freshly revealed text as the bubble grows.
+watch(displayed, () => emit('grow'))
 const timeFmt = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' })
 const time = computed(() => {
   if (!props.createdAt) return ''
@@ -11,8 +21,8 @@ const time = computed(() => {
 </script>
 <template>
   <div class="msg" :class="role === 'user' ? 'user' : 'bot glass'">
-    <MarkdownText :text="content" :class="{ streaming }" />
-    <time v-if="time && !streaming" class="time" :datetime="createdAt">{{ time }}</time>
+    <MarkdownText :text="text" :class="{ streaming: showCaret }" />
+    <time v-if="time && !showCaret" class="time" :datetime="createdAt">{{ time }}</time>
   </div>
 </template>
 <style scoped>

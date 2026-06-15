@@ -16,7 +16,7 @@ export const LENS_GRADIENT = lensGradient(1)
 export const LEAK_RADIUS = 96      // reveal radius when the cursor is slow/still
 export const MAX_RADIUS = 200      // reveal radius at/above MAX_SPEED
 export const MAX_SPEED = 24        // px/ms cursor speed that maps to MAX_RADIUS
-export const TRAIL_MS = 1600       // fade for trail points
+export const TRAIL_MS = 2048       // fade for trail points
 
 export function lensVars(x: number, y: number, r = LEAK_RADIUS): Record<string, string> {
   return { '--mpx': `${x - r}px`, '--mpy': `${y - r}px`, '--d': `${2 * r}px` }
@@ -36,9 +36,9 @@ export function useCursorLens(el: () => HTMLElement | null | undefined, r = LEAK
   const active = ref(false)
   const reduce = typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const STEP = 32         // px between sampled trail points — fast moves are interpolated to this spacing
+  const STEP = 48         // px between sampled trail points — fast moves are interpolated to this spacing
   const MAX_FILL = 96    // cap interpolated points per move (runaway / huge-jump guard)
-  const MAX_POINTS = 256 // hard cap on live trail layers — bounds mask-string size & compositor cost
+  const MAX_POINTS = 512 // hard cap on live trail layers — bounds mask-string size & compositor cost
   const GAP_MS = 150     // idle gap after which we restart the trail instead of bridging
   const TELEPORT = 600   // px jump treated as a teleport (window re-entry) — don't bridge
   let cx = -9999, cy = -9999, have = false, raf = 0

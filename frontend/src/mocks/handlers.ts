@@ -72,6 +72,7 @@ export const handlers = [
   }),
 
   // Plans
+  http.get(`${base}/plans`, () => HttpResponse.json({ items: db.plans.map(p => ({ plan_id: p.id, status: p.status, destination: p.destination, estimated_total_rub: p.estimated_total_rub, created_at: p.created_at })) })),
   http.get(`${base}/plans/:id`, ({ params }) => { const p = db.plans.find(x => x.id === params.id); return p ? HttpResponse.json(p) : err(404, 'not_found', 'План не найден') }),
   http.get(`${base}/plans/:id/map`, ({ params }) => {
     const p = db.plans.find(x => x.id === params.id); if (!p) return err(404, 'not_found', 'План не найден')

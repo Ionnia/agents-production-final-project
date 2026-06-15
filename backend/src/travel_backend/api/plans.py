@@ -5,7 +5,7 @@ from ..errors import APIError
 from ..models import Plan, PlanMapPoint
 from ..schemas import RejectRequest
 from ..security import CurrentUser, Database
-from ..services.serializers import calendar_dict, map_point_dict, plan_dict
+from ..services.serializers import calendar_dict, map_point_dict, plan_dict, plan_summary_dict
 
 router = APIRouter(prefix="/plans", tags=["Plans"])
 
@@ -15,6 +15,19 @@ async def owned_plan(db: Database, user_id: str, plan_id: str) -> Plan:
     if plan is None:
         raise APIError(404, "not_found")
     return plan
+
+
+@router.get("")
+async def list_plans(user: CurrentUser, db: Database) -> dict:
+    # Every plan owned by the user, newest first. Unlike `/groups/{id}/plans`, this
+    # is NOT scoped to a group, so group-less plans (the default for the inline-chat
+    # approval flow) are listed here — otherwise they would be unreachable.
+    plans = (
+        await db.scalars(
+            select(Plan).where(Plan.user_id == user.id).order_by(Plan.created_at.desc())
+        )
+    ).all()
+    return {"items": [await plan_summary_dict(db, item) for item in plans]}
 
 
 @router.get("/{plan_id}")

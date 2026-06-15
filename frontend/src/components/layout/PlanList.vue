@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { api } from '../../api/endpoints'
 import type { PlanSummary } from '../../api/types'
-import { useGroupsStore } from '../../stores/groups'
 import CollapsibleSection from './CollapsibleSection.vue'
 import EmptyState from '../ui/EmptyState.vue'
 import { planStatusLabel } from '../../utils/planStatus'
-const groups = useGroupsStore()
 const plans = ref<PlanSummary[]>([])
-const props = defineProps<{ filter: string }>()
+// `open` drives a reload every time the panel is shown: the panel stays mounted
+// (v-show), so without this the list would only ever reflect its first fetch and
+// miss plans accepted/created since (e.g. just-accepted inline plans).
+const props = defineProps<{ filter: string; open: boolean }>()
 const emit = defineEmits<{ navigate: [] }>()
 // Filter by destination, most recent first; the section caps the visible window to ~3 rows and scrolls.
 const sorted = computed(() =>
@@ -18,11 +19,10 @@ const sorted = computed(() =>
     .slice()
     .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? '')),
 )
-onMounted(async () => {
-  if (!groups.list.length) await groups.loadList()
-  const all = await Promise.all(groups.list.map(g => api.groupPlans(g.id).then(r => r.items)))
-  plans.value = all.flat()
-})
+// Lists every plan the user owns — including group-less plans from the inline-chat
+// approval flow, which the per-group endpoint cannot return.
+async function load() { plans.value = (await api.plans()).items }
+watch(() => props.open, (open) => { if (open) load() }, { immediate: true })
 </script>
 <template>
   <CollapsibleSection title="Планы">

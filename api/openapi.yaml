@@ -390,6 +390,19 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
   # ───────────────────────────── Plans ─────────────────────────────
+  /plans:
+    get:
+      tags: [Plans]
+      summary: All plans owned by the current user (not scoped to a group)
+      operationId: listPlans
+      responses:
+        '200':
+          description: Plan summaries, newest first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /plans/{plan_id}:
     get:
       tags: [Plans]

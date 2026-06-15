@@ -75,7 +75,7 @@ async function onAnswer(optionIds: string[], freeform?: string) {
     </transition>
 
     <div v-if="started" class="thread">
-      <MessageList :messages="chat.messages" :question="chat.pendingQuestion" :plan-status="chat.planStatus" :plan-id="chat.planId" :running="chat.running" @answer="onAnswer" />
+      <MessageList :messages="chat.messages" :question="chat.pendingQuestion" :plan-status="chat.planStatus" :plan-id="chat.planId" :running="chat.running" :reply-started="chat.replyStarted" @answer="onAnswer" />
     </div>
 
     <div class="composer-slot" :class="{ bottom: started, animate }">

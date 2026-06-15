@@ -70,7 +70,9 @@ passes the draft's own trip dates as a `nights_override` so the hotel subtotal r
 length instead of defaulting to a single night. The agent-side recommendation gate is relaxed for
 group-less runs (it cannot call Contract B `validate` without a `group_id`), but the backend remains
 the authority — an agent `ready` is still ignored until the draft passes this validation and is
-persisted.
+persisted. Because group-less plans are the common case, `GET /plans` lists every plan the user owns
+regardless of group (newest first); the group-scoped `GET /groups/{id}/plans` only ever returns plans
+that belong to that group, so the sidebar relies on `GET /plans` to surface inline-chat plans.
 
 Map points keep normalized route coordinates and ordering in columns, with validated optional
 place-card attributes stored as JSON. Public map fields are flat and backward-compatible.

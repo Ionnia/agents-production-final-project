@@ -24,7 +24,11 @@ export function createClient(opts: ClientOptions = {}) {
   const getToken = opts.getToken ?? (() => null)
 
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const headers: Record<string, string> = {}
+    // КудаЕдем is a Russian-only product, so declare ru-RU explicitly. Otherwise
+    // the browser's own Accept-Language drives the backend's content negotiation
+    // and a non-Russian browser gets English agent/plan strings (e.g. the
+    // "plan_ready" message) that clash with the Russian UI.
+    const headers: Record<string, string> = { 'accept-language': 'ru-RU' }
     const token = getToken()
     if (token) headers.authorization = `Bearer ${token}`
     if (body !== undefined) headers['content-type'] = 'application/json'

@@ -11,5 +11,7 @@ export const useSessionsStore = defineStore('sessions', () => {
   async function loadList() { loading.value = true; try { list.value = (await api.sessions()).items } finally { loading.value = false } }
   async function loadDetail(id: string) { loading.value = true; try { current.value = await api.session(id) } finally { loading.value = false } }
   function clearCurrent() { current.value = null }
-  return { list, current, loading, loadList, loadDetail, clearCurrent }
+  // Drop the signed-in user's cached history so the next user can't see it.
+  function reset() { list.value = []; current.value = null; loading.value = false }
+  return { list, current, loading, loadList, loadDetail, clearCurrent, reset }
 })

@@ -1,4 +1,4 @@
-import { it, expect, beforeEach, beforeAll, afterAll, afterEach } from 'vitest'
+import { it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
@@ -55,9 +55,9 @@ it('new chat: reply is visible after the run with the URL updated, no reload nee
   await flushPromises()
 
   expect(router.currentRoute.value.path).toBe('/c/S-new')
-  const text = wrapper.text()
-  expect(text).toContain('Ваш маршрут готов') // bug 2: reply must be visible without reload
-  const occurrences = text.split('Ваш маршрут готов').length - 1
+  // The reply now types out chunk by chunk, so wait for the full text to land.
+  await vi.waitFor(() => expect(wrapper.text()).toContain('Ваш маршрут готов')) // bug 2: reply must be visible without reload
+  const occurrences = wrapper.text().split('Ваш маршрут готов').length - 1
   expect(occurrences).toBe(1) // bug 1: not doubled
 })
 
@@ -81,7 +81,7 @@ it('a message that arrives after run_status:completed is not dropped', async () 
   await wrapper.find('textarea').setValue('Привет')
   await wrapper.find('button.send').trigger('click')
   await flushPromises(); await flushPromises()
-  expect(wrapper.text()).toContain('Ответ агента')
+  await vi.waitFor(() => expect(wrapper.text()).toContain('Ответ агента'))
 })
 
 it('shows the agent message instead of a generic plan error when both arrive live', async () => {
@@ -105,9 +105,8 @@ it('shows the agent message instead of a generic plan error when both arrive liv
   await wrapper.find('button.send').trigger('click')
   await flushPromises(); await flushPromises()
 
-  const text = wrapper.text()
-  expect(text).toContain('Уточните бюджет и даты поездки')
-  expect(text).not.toContain('Не удалось построить план')
+  await vi.waitFor(() => expect(wrapper.text()).toContain('Уточните бюджет и даты поездки'), { timeout: 2000 })
+  expect(wrapper.text()).not.toContain('Не удалось построить план')
 })
 
 it('hydrating a session with a pending clarifying question does not double it', async () => {

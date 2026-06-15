@@ -2,6 +2,10 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api, setTokenGetter } from '../api/endpoints'
 import { ApiClientError } from '../api/client'
+import { useSessionsStore } from './sessions'
+import { useGroupsStore } from './groups'
+import { useChatStore } from './chat'
+import { usePlansStore } from './plans'
 import type { User } from '../api/types'
 
 const LS = 'travel.auth'
@@ -15,13 +19,22 @@ export const useAuthStore = defineStore('auth', () => {
   setTokenGetter(() => accessToken.value)
 
   function persist() { localStorage.setItem(LS, JSON.stringify({ refreshToken: refreshToken.value })) }
-  function clearAuth() { user.value = null; accessToken.value = null; refreshToken.value = null; localStorage.removeItem(LS) }
+  // The SPA keeps Pinia stores alive across a login/logout (no full page reload),
+  // so every session boundary must purge the previous user's per-user caches —
+  // otherwise the next user keeps seeing the prior user's history/groups/plans
+  // (the side-panel lists only refetch when empty).
+  function resetUserData() {
+    useSessionsStore().reset(); useGroupsStore().reset(); usePlansStore().reset(); useChatStore().reset()
+  }
+  function clearAuth() { user.value = null; accessToken.value = null; refreshToken.value = null; localStorage.removeItem(LS); resetUserData() }
 
   async function login(email: string, password: string) {
+    resetUserData()
     const r = await api.login({ email, password })
     accessToken.value = r.access_token; refreshToken.value = r.refresh_token; user.value = r.user; persist()
   }
   async function register(name: string, email: string, password: string) {
+    resetUserData()
     const r = await api.register({ name, email, password })
     accessToken.value = r.tokens.access_token; refreshToken.value = r.tokens.refresh_token; user.value = r.user; persist()
   }

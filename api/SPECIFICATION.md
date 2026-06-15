@@ -60,7 +60,7 @@ user language.
 | Chat / Run | `POST /chat`, `POST /chat/{run_id}/stream-ticket`, `GET /chat/{run_id}/stream`, `POST /chat/{run_id}/cancel` |
 | Sessions | `GET /sessions`, `GET /sessions/{session_id}` |
 | Groups | `GET/POST /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /groups/{id}/preferences`, `GET /groups/{id}/plans` |
-| Plans | `GET /plans/{id}`, `POST /plans/{id}/accept`, `POST /plans/{id}/reject`, `POST /plans/{id}/modify`, `GET /plans/{id}/map`, `GET /plans/{id}/calendar` |
+| Plans | `GET /plans` (all of the user's plans, group-less included), `GET /plans/{id}`, `POST /plans/{id}/accept`, `POST /plans/{id}/reject`, `POST /plans/{id}/modify`, `GET /plans/{id}/map`, `GET /plans/{id}/calendar` |
 
 ### SSE events (`event:` name → `data:` schema)
 

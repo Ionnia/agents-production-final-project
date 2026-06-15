@@ -28,5 +28,7 @@ export const usePlansStore = defineStore('plans', () => {
     const body: ModifyRequest = override ?? { add: pendingAdd.value.map(p => ({ name: p.name, kind: p.kind })), remove: [...pendingRemove.value] }
     const { run_id } = await api.modifyPlan(id, body); resetEdits(); return run_id
   }
-  return { current, map, calendar, loading, pendingRemove, pendingAdd, hasEdits, load, toggleRemove, stageAdd, resetEdits, accept, reject, modify }
+  // Drop the signed-in user's cached plan so the next user can't see it.
+  function reset() { current.value = null; map.value = null; calendar.value = null; loading.value = false; resetEdits() }
+  return { current, map, calendar, loading, pendingRemove, pendingAdd, hasEdits, load, toggleRemove, stageAdd, resetEdits, accept, reject, modify, reset }
 })
