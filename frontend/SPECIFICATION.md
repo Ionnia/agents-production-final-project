@@ -130,8 +130,9 @@ All files under `src/mocks/`:
 - When a clarifying question is pending, the main composer submits text through `chat.answer(question.id, [], text)` rather than starting a fresh chat turn, so freeform clarification replies keep the correct answer context.
 - **`ChatComposer.vue`** — textarea with auto-grow and send button; emits `submit(text)`. While `busy` (a run is in flight) the textarea is disabled and shows an "Агент отвечает…" placeholder, and the send button is disabled.
 - **`MessageList.vue`** — scrollable list; renders `MessageBubble` per message, an animated "thinking" indicator while `running` is set and no text is streaming yet (covers the live backend, which emits one final `message` with no `message_delta` chunks), `ClarifyingQuestion` when `question` prop is set, `PlanStatus` when `planStatus` is set. Assistant bubbles carry no drop shadow.
-- **`MessageBubble.vue`** — user/assistant bubble with optional `plan_ref` link to the plan view and a small `HH:MM` (ru-RU) timestamp from the message's `created_at`. Assistant bubbles carry no drop shadow.
-- **`ClarifyingQuestion.vue`** — renders option chips + optional freeform input; emits `answer(optionIds, freeform)`.
+- **`MessageBubble.vue`** — user/assistant bubble with optional `plan_ref` link to the plan view and a small `HH:MM` (ru-RU) timestamp from the message's `created_at`. Body text is rendered via `MarkdownText`; while `streaming` it passes the `streaming` class so the blinking typing caret tracks the end of the text. Assistant bubbles carry no drop shadow.
+- **`MarkdownText.vue`** — the single Markdown renderer for chat text (assistant bubbles + clarifying-question prompt). Parses with `marked` (`gfm: true`, `breaks: true` — a single `\n` becomes `<br>`, `\n\n` starts a paragraph, `1.`/`-` render as lists) and sanitizes the result with `DOMPurify` before the lone `v-html` in the app. Renders immediately, so live (un-reloaded) text respects newlines and `.md` formatting. When given the `streaming` class it appends a blinking caret after the last block.
+- **`ClarifyingQuestion.vue`** — renders the question prompt via `MarkdownText` (newlines + Markdown honoured live), option chips + optional freeform input; emits `answer(optionIds, freeform)`.
 - **`PlanStatus.vue`** — live status badge (`building` / `ready` / `error`) with a link to the plan when ready.
 
 ### Auth (`src/components/auth/AuthView.vue`)
@@ -208,7 +209,7 @@ frontend/
       ui/GlassPanel.vue Skeleton.vue EmptyState.vue ToastHost.vue
       auth/AuthView.vue
       chat/ChatView.vue ChatComposer.vue MessageList.vue MessageBubble.vue
-           ClarifyingQuestion.vue PlanStatus.vue
+           MarkdownText.vue ClarifyingQuestion.vue PlanStatus.vue
       plan/PlanView.vue MapView.vue ItineraryView.vue OfferCard.vue PlanEditBar.vue
       AgentChat/                       Legacy prototype components (not used by main app)
     assets/

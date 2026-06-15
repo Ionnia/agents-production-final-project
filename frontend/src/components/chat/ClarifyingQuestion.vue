@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import MarkdownText from './MarkdownText.vue'
 import type { ClarifyingQuestion } from '../../api/types'
 const props = defineProps<{ question: ClarifyingQuestion }>()
 const emit = defineEmits<{ answer: [optionIds: string[], freeform?: string] }>()
@@ -9,7 +10,7 @@ function sendFree() { if (freeform.value.trim()) emit('answer', [], freeform.val
 </script>
 <template>
   <div class="q">
-    <p class="qt glass">{{ question.text }}</p>
+    <MarkdownText :text="question.text" class="qt glass" />
     <div class="chips">
       <button v-for="o in question.options" :key="o.id" class="chip glass" @click="pick(o.id)">{{ o.label }}</button>
     </div>
