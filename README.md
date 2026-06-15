@@ -21,6 +21,10 @@
 
 <br>
 
+
+
+
+
 <!-- ▶️ ДЕМО. Чтобы включить ВСТРОЕННЫЙ видеоплеер вместо постера ниже:
      1. Открой на github.com новый issue / PR / комментарий (или веб-редактор этого README)
         и перетащи в поле ввода файл  docs/readme_assets/demo_1440p.mp4  (2K, ~35 МБ).
@@ -30,7 +34,8 @@
         плеер), либо на тег:
         <video src="ССЫЛКА" controls muted playsinline width="860"></video>
 -->
-<img src="docs/readme_assets/demo_poster.webp" alt="Демо: агент-планировщик путешествий" width="860">
+<video src="https://github.com/user-attachments/assets/e62c1ba1-c356-42f0-97b9-93b6c4ef1c70" controls muted playsinline width="860"></video>
+<!-- <img src="docs/readme_assets/demo_poster.webp" alt="Демо: агент-планировщик путешествий" width="860"> -->
 
 <p><sub>▶️ <b>Полное демо (~2 мин)</b> — встроенный плеер появляется после загрузки видео на GitHub (см. комментарий в исходнике README)</sub></p>
 
