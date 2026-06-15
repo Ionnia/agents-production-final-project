@@ -33,8 +33,8 @@ pnpm gen:api        # regenerate src/api/schema.d.ts from ../api/openapi.yaml
 
 - **Prerender script:** `scripts/prerender-backgrounds.mjs` — uses `@napi-rs/canvas` to render 8 travel scenes (france, greece, italy, japan, china, india, russia, usa) as dithered images.
 - **Output:** `public/backgrounds/<scene>-mono.webp` (grayscale dithered) and `<scene>-color.webp` (full-color dithered). 16 files total, served as static assets.
-- **Component:** `src/components/background/DitheredBackground.vue` — picks a random scene on each load, stacks the two layers; the color layer is revealed under the cursor by `useCursorLens` (radial-gradient masks). On mount it also sets the global `--accent` / `--accent-press` tokens from a per-scene `ACCENTS` map (china=jade, russia=blue, usa=dark blue, india=soft pink, japan=reddish pink, italy=terracotta, france=goldish yellow, greece=Aegean blue), so all accent-tinted UI (buttons, user bubbles, map route, links) matches the active background.
-- **Cursor lens composable:** `src/composables/useCursorLens.ts` — listens to `pointermove` and imperatively writes a stack of radial-gradient mask layers onto the color `<img>` once per `requestAnimationFrame`: a fully-revealed head under the cursor plus a sampled trail of recent positions whose mask alpha decays over each point's own lifetime, so the revealed streak fades out behind the cursor. Points laid while the left mouse button is held get `SLOW_TRAIL_MS` (≈1600 ms) instead of `TRAIL_MS` (≈300 ms), so they linger — and keep fading slowly even after the button is released. The reveal radius scales with cursor speed (eased from `LEAK_RADIUS` up to `MAX_RADIUS`). Collapses to just the head (no trail) under `prefers-reduced-motion`. `lensGradient(a)` builds an alpha-scaled gradient; `lensVars(x, y, r)` is pure and tested.
+- **Component:** `src/components/background/DitheredBackground.vue` — picks a random scene on each load, stacks the two layers; the color layer is revealed under the cursor by `useCursorLens` (radial-gradient masks). On mount it also sets the global `--accent` / `--accent-press` tokens from a per-scene `ACCENTS` map (china=jade, russia=blue, usa=dark blue, india=soft pink, japan=reddish pink, italy=terracotta, france=vibrant gold, greece=Aegean blue), so all accent-tinted UI (buttons, user bubbles, map route, links) matches the active background.
+- **Cursor lens composable:** `src/composables/useCursorLens.ts` — listens to `pointermove` and imperatively writes a stack of radial-gradient mask layers onto the color `<img>` once per `requestAnimationFrame`: a fully-revealed head under the cursor plus a sampled trail of recent positions whose mask alpha decays over each point's own lifetime, so the revealed streak fades out behind the cursor. Each trail point fades over `TRAIL_MS` (≈1600 ms). The behaviour is a single hover effect — there is no mouse-button interaction. The reveal radius scales with cursor speed (eased from `LEAK_RADIUS` up to `MAX_RADIUS`). Collapses to just the head (no trail) under `prefers-reduced-motion`. `lensGradient(a)` builds an alpha-scaled gradient; `lensVars(x, y, r)` is pure and tested.
 
 ## 3. Glass design system
 
@@ -63,10 +63,10 @@ The `beforeEach` guard lazily imports `useAuthStore`, calls `auth.restore()` on 
 
 ## 5. App shell and layout components
 
-- **`AppShell.vue`** — fixed full-screen chrome: `DitheredBackground` (z-index 0), `MenuButton` (top-left, z-index 30, hidden via `v-show` while the panel is open), `SidePanel` (panel z-index 35 over a click-to-close scrim at z-index 30), `<main class="pane">` slot for `<RouterView>` (z-index 1), `ToastHost` (z-index 100).
+- **`AppShell.vue`** — fixed full-screen chrome: `DitheredBackground` (z-index 0), `MenuButton` (top-left, z-index 30, shown only when authenticated and hidden via `v-show` while the panel is open), `SidePanel` (rendered only when authenticated; panel z-index 35 over a click-to-close scrim at z-index 30), `<main class="pane">` slot for `<RouterView>` (z-index 1), `ToastHost` (z-index 100).
 - **`MenuButton.vue`** — hamburger button; emits `toggle`.
-- **`SidePanel.vue`** — slides in from the left (transition `translateX(-104%)`) above the menu button, over a dimmed scrim that closes the panel on click; 308 px wide, full-width on ≤ 480 px (`border-radius: 0`). Contains: header (title + ✕ close button), "New chat" button, search input, scrollable `SessionList` / `GroupList` / `PlanList`, logout button. Closes on ✕, scrim click, `Escape`, list navigation, new-chat, or logout.
-- **`SessionList.vue`**, **`GroupList.vue`**, **`PlanList.vue`** — list sub-components for the side panel; each pulls from its Pinia store and filters by the `filter` prop.
+- **`SidePanel.vue`** — slides in from the left (transition `translateX(-104%)`) above the menu button, over a dimmed scrim that closes the panel on click; 308 px wide, full-width on ≤ 480 px (`border-radius: 0`). Contains: header (title + ✕ close button), "New chat" button, search input, scrollable `GroupList` / `PlanList` / `SessionList` (top-to-bottom order), logout button. Closes on ✕, scrim click, `Escape`, list navigation, new-chat, or logout.
+- **`SessionList.vue`**, **`GroupList.vue`**, **`PlanList.vue`** — list sub-components for the side panel; each pulls from its Pinia store and filters by the `filter` prop. `GroupList` and `PlanList` wrap their items in **`CollapsibleSection.vue`** (an accordion: the header toggles the body open/closed, and the body shows the most-recent items capped at ~3 rows tall, scrolling for the rest).
 
 ## 6. UI primitives
 
@@ -104,7 +104,7 @@ All in `src/stores/`:
 | `sessions.ts` | `list: SessionSummary[]`, `current: SessionDetail \| null` | `loadList()`, `loadDetail(id)` |
 | `groups.ts` | `list: GroupSummary[]`, `current: Group \| null` | `loadList()`, `loadOne(id)` |
 | `plans.ts` | `current: Plan \| null`, `map`, `calendar`, `loading`, `pendingAdd` | `load(id)`, `accept(id)`, `reject(id)`, `modify(id)`, `stageAdd(city)`, `hasEdits()` |
-| `chat.ts` | `messages`, `sessionId`, `pendingQuestion`, `planStatus`, `planId`, `streaming` | `send(text)`, `answer(qId, optIds, freeform)`, `hydrate(id, msgs)`, `reset()` |
+| `chat.ts` | `messages`, `sessionId`, `pendingQuestion`, `planStatus`, `planId`, `running` | `send(text)`, `answer(qId, optIds, freeform)`, `hydrate(id, msgs)`, `reset()`, `waitForIdle()` |
 
 All stores are tested (`*.spec.ts` co-located).
 
@@ -122,10 +122,10 @@ All files under `src/mocks/`:
 
 ### Chat (`src/components/chat/`)
 
-- **`ChatView.vue`** — route-level component. Hero state (composer centred at 48%, `Куда отправимся?` heading) transitions to chatting state (composer at bottom, message thread visible) when the first message is sent. The `sessionId` watcher skips re-hydration when the route param already matches the live store session, so live state (e.g. a pending clarifying question) survives the `router.replace` after the first message. Responsive: `font-size: 28px` for the heading and `width: 94%` for the thread on ≤ 600 px.
+- **`ChatView.vue`** — route-level component. Hero state (composer centred at 48%, `Куда отправимся?` heading) transitions to chatting state (composer at bottom, message thread visible) when the first message is sent. The centre→bottom slide is gated behind an `animate` flag set only on that first send, so a direct load (`/c/:id`) — which hydrates messages already "started" — renders the composer at the bottom immediately instead of sliding down over already-loaded bubbles. The hero block is likewise gated to the home route (`heroVisible = !started && !sessionId`), so it never flashes over the bubbles while a session route hydrates. The `sessionId` watcher skips re-hydration when the route param already matches the live store session, so live state (e.g. a pending clarifying question) survives the `router.replace` after the first message. After each completed run it calls `sessions.loadList()` so a newly started chat appears in the side-panel history without a reload. Responsive: `font-size: 28px` for the heading and `width: 94%` for the thread on ≤ 600 px.
 - **`ChatComposer.vue`** — textarea with auto-grow and send button; emits `submit(text)`.
-- **`MessageList.vue`** — scrollable list; renders `MessageBubble` per message, `ClarifyingQuestion` when `question` prop is set, `PlanStatus` when `planStatus` is set.
-- **`MessageBubble.vue`** — user/assistant bubble with optional `plan_ref` link to the plan view.
+- **`MessageList.vue`** — scrollable list; renders `MessageBubble` per message, an animated "thinking" indicator while `running` is set and no text is streaming yet (covers the live backend, which emits one final `message` with no `message_delta` chunks), `ClarifyingQuestion` when `question` prop is set, `PlanStatus` when `planStatus` is set. Assistant bubbles carry no drop shadow.
+- **`MessageBubble.vue`** — user/assistant bubble with optional `plan_ref` link to the plan view and a small `HH:MM` (ru-RU) timestamp from the message's `created_at`. Assistant bubbles carry no drop shadow.
 - **`ClarifyingQuestion.vue`** — renders option chips + optional freeform input; emits `answer(optionIds, freeform)`.
 - **`PlanStatus.vue`** — live status badge (`building` / `ready` / `error`) with a link to the plan when ready.
 
@@ -135,9 +135,10 @@ Login/register form (tab-switched). On success navigates to the `redirect` query
 
 ### Side panel lists
 
-- **`SessionList.vue`** — renders session history; filter by `filter` prop; navigates to `/c/:id`.
-- **`GroupList.vue`** — renders groups; navigates to group detail (currently shows info in side panel).
-- **`PlanList.vue`** — renders plans from the active session; navigates to `/plans/:id`.
+- **`SessionList.vue`** — renders session history with each chat's creation time (Russian locale: time only when created today, otherwise short date + time, e.g. `27 янв. 14:37`); filter by `filter` prop; navigates to `/c/:id`.
+- **`GroupList.vue`** — renders groups (most recent first) inside a `CollapsibleSection`; navigates to group detail (currently shows info in side panel).
+- **`PlanList.vue`** — renders plans from the active session (most recent first) inside a `CollapsibleSection`; navigates to `/plans/:id`.
+- **`CollapsibleSection.vue`** — accordion wrapper: a clickable header (chevron + title) toggles a scrollable body capped at ~3 visible rows.
 
 ### Plan view (`src/components/plan/`)
 
@@ -197,7 +198,7 @@ frontend/
     components/
       background/DitheredBackground.vue
       layout/AppShell.vue MenuButton.vue SidePanel.vue
-              SessionList.vue GroupList.vue PlanList.vue
+              SessionList.vue GroupList.vue PlanList.vue CollapsibleSection.vue
       ui/GlassPanel.vue Skeleton.vue EmptyState.vue ToastHost.vue
       auth/AuthView.vue
       chat/ChatView.vue ChatComposer.vue MessageList.vue MessageBubble.vue

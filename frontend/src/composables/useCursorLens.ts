@@ -16,8 +16,7 @@ export const LENS_GRADIENT = lensGradient(1)
 export const LEAK_RADIUS = 96      // reveal radius when the cursor is slow/still
 export const MAX_RADIUS = 200      // reveal radius at/above MAX_SPEED
 export const MAX_SPEED = 24        // px/ms cursor speed that maps to MAX_RADIUS
-export const TRAIL_MS = 300
-export const SLOW_TRAIL_MS = 1600  // longer fade for points laid while the left button is held
+export const TRAIL_MS = 1600       // fade for trail points
 
 export function lensVars(x: number, y: number, r = LEAK_RADIUS): Record<string, string> {
   return { '--mpx': `${x - r}px`, '--mpy': `${y - r}px`, '--d': `${2 * r}px` }
@@ -28,30 +27,29 @@ interface Pt { x: number; y: number; t: number; r: number; life: number }
 /**
  * Tracks the pointer and reveals the color layer beneath it. The current point
  * stays fully revealed; recent positions form a trail whose mask alpha decays
- * with age, so a revealed streak fades out behind the cursor. Each point carries
- * its own lifetime captured at creation: while the left button is held, new
- * points get `SLOW_TRAIL_MS` instead of `TRAIL_MS`, so they linger — and keep
- * fading slowly even after the button is released. One style write per frame;
- * the whole effect collapses to a single head point when reduced motion is on.
+ * with age, so a revealed streak fades out behind the cursor. Each point fades
+ * over `TRAIL_MS`, and the reveal radius scales with cursor speed. The behaviour
+ * is a single hover effect — no mouse-button interaction. One style write per
+ * frame; the whole effect collapses to a single head point when reduced motion is on.
  */
 export function useCursorLens(el: () => HTMLElement | null | undefined, r = LEAK_RADIUS) {
   const active = ref(false)
   const reduce = typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const STEP = 16         // px between sampled trail points — fast moves are interpolated to this spacing
+  const STEP = 32         // px between sampled trail points — fast moves are interpolated to this spacing
   const MAX_FILL = 96    // cap interpolated points per move (runaway / huge-jump guard)
   const MAX_POINTS = 256 // hard cap on live trail layers — bounds mask-string size & compositor cost
   const GAP_MS = 150     // idle gap after which we restart the trail instead of bridging
   const TELEPORT = 600   // px jump treated as a teleport (window re-entry) — don't bridge
   let cx = -9999, cy = -9999, have = false, raf = 0
-  let lastX = 0, lastY = 0, lastT = 0, primed = false, pressed = false
+  let lastX = 0, lastY = 0, lastT = 0, primed = false
   let sx = 0, sy = 0, st = 0, sHas = false // last sampled trail point (for interpolation)
   let targetR = r, headR = r // speed-driven reveal radius (eased)
   let prevTrail = false, pcx = NaN, pcy = NaN, phr = NaN // last-written state, for the idle short-circuit
   const pts: Pt[] = []
 
   function addPt(x: number, y: number, t: number) {
-    pts.push({ x, y, t, r: headR, life: pressed ? SLOW_TRAIL_MS : TRAIL_MS })
+    pts.push({ x, y, t, r: headR, life: TRAIL_MS })
     if (pts.length > MAX_POINTS) pts.splice(0, pts.length - MAX_POINTS) // drop oldest excess
   }
 
@@ -73,7 +71,6 @@ export function useCursorLens(el: () => HTMLElement | null | undefined, r = LEAK
   function onMove(e: PointerEvent) {
     cx = e.clientX; cy = e.clientY; have = true
     if (!active.value) active.value = true
-    if (!(e.buttons & 1)) pressed = false // self-heal if a left pointerup was missed (released off-window etc.)
     const now = performance.now()
     if (primed) {
       const dt = now - lastT
@@ -85,9 +82,6 @@ export function useCursorLens(el: () => HTMLElement | null | undefined, r = LEAK
     lastX = cx; lastY = cy; lastT = now
     if (!reduce) fillTrail(now)
   }
-  function onDown(e: PointerEvent) { if (e.button === 0) pressed = true }
-  function onUp(e: PointerEvent) { if (e.button === 0) pressed = false }
-  function clearPress() { pressed = false } // pointercancel / window blur — gesture lost
 
   function frame() {
     raf = requestAnimationFrame(frame)
@@ -131,18 +125,10 @@ export function useCursorLens(el: () => HTMLElement | null | undefined, r = LEAK
 
   onMounted(() => {
     window.addEventListener('pointermove', onMove, { passive: true })
-    window.addEventListener('pointerdown', onDown, { passive: true })
-    window.addEventListener('pointerup', onUp, { passive: true })
-    window.addEventListener('pointercancel', clearPress, { passive: true })
-    window.addEventListener('blur', clearPress)
     raf = requestAnimationFrame(frame)
   })
   onBeforeUnmount(() => {
     window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerdown', onDown)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', clearPress)
-    window.removeEventListener('blur', clearPress)
     cancelAnimationFrame(raf)
   })
   return { active }

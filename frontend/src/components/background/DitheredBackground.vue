@@ -12,7 +12,7 @@ const ACCENTS: Record<(typeof SCENES)[number], readonly [string, string]> = {
   india: ['#ce7396', '#b25a7e'],  // soft pink
   japan: ['#e0556e', '#c13e58'],  // reddish pink
   italy: ['#d97757', '#cf5f3f'],  // terracotta
-  france: ['#c99a2e', '#a87c1f'], // goldish yellow
+  france: ['#e8a51c', '#bd820c'], // vibrant gold
   greece: ['#2e84c9', '#2169aa'], // Aegean blue
 }
 const scene = SCENES[Math.floor(Math.random() * SCENES.length)]

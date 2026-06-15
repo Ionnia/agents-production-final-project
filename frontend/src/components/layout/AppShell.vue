@@ -4,13 +4,15 @@ import MenuButton from './MenuButton.vue'
 import SidePanel from './SidePanel.vue'
 import ToastHost from '../ui/ToastHost.vue'
 import { ref } from 'vue'
+import { useAuthStore } from '../../stores/auth'
+const auth = useAuthStore()
 const panelOpen = ref(false)
 </script>
 
 <template>
   <DitheredBackground />
-  <MenuButton v-show="!panelOpen" @toggle="panelOpen = !panelOpen" />
-  <SidePanel :open="panelOpen" @close="panelOpen = false" />
+  <MenuButton v-show="!panelOpen && auth.isAuthenticated" @toggle="panelOpen = !panelOpen" />
+  <SidePanel v-if="auth.isAuthenticated" :open="panelOpen" @close="panelOpen = false" />
   <main class="pane"><slot /></main>
   <ToastHost />
 </template>

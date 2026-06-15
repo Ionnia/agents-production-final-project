@@ -30,9 +30,9 @@ async function logout() { emit('close'); await auth.logout(); router.push('/logi
       <button class="newchat" @click="newChat">＋ Новый чат</button>
       <input v-model="filter" class="search" placeholder="Поиск по чатам…" />
       <div class="scroll">
-        <SessionList :filter="filter" @navigate="emit('close')" />
         <GroupList :filter="filter" />
         <PlanList @navigate="emit('close')" />
+        <SessionList :filter="filter" @navigate="emit('close')" />
       </div>
       <button class="logout" @click="logout">Выйти</button>
     </aside>
