@@ -78,13 +78,30 @@ labels are unavailable.
 `outcome ∈ recommendation | clarification | constraints_conflict | escalation`.
 
 **Run lifecycle:** `POST /v1/runs` → open `…/stream` → Final agent graph reasons → the service maps
-the graph output to Contract A semantic events. Before a `recommendation` is emitted, the service
-calls `POST /internal/plans/validate`; on `valid=false` it downgrades to `clarification`. The gate
-**never fails open**: if validation cannot be performed — the backend is unreachable/errors, or the
-run carries no `group_id` (which `POST /internal/plans/validate` requires) — the recommendation is
-also downgraded to `clarification` rather than emitted unvalidated. On a `plan` event the backend
-validates again and persists; terminal `run_status` carries the `outcome`. The backend normalizes
-these semantic events into the frontend vocabulary it already exposes.
+the graph output to Contract A semantic events. Before a `recommendation` is emitted on a run that
+carries a `group_id`, the service calls `POST /internal/plans/validate`; on `valid=false` it
+downgrades to `clarification`, and that gate **never fails open** (backend unreachable/errors also
+downgrades). On a **group-less** run (free-form chat with no pre-selected group — the common case),
+`POST /internal/plans/validate` cannot run (it requires a `group_id`), so the service forwards the
+agent's recommendation, which is already grounded by the graph's deterministic feasibility
+calculator. This does **not** emit an unvalidated plan to the user: the backend re-validates the
+draft on the `plan` event (`validate_selection`) and **ignores `plan_status: ready` until the draft
+passes validation and is persisted**, so the backend remains the sole authority over what becomes a
+plan. A recommendation that carries no concrete selection is downgraded to `clarification`. On a
+`plan` event the backend validates and persists; terminal `run_status` carries the `outcome`. The
+backend normalizes these semantic events into the frontend vocabulary it already exposes.
+
+**Conversation memory & group-less planning.** The Final graph is single-shot, so the service feeds
+it the whole dialogue, not just the latest turn: every user turn is recorded on the thread for
+**every** mode (`new_trip`/`answer`/`modify`), and the planner passes the full transcript as
+`user_request` plus a user-only projection as `user_text_only` (so the graph never re-asks for facts
+already given, and deterministic destination/origin matching never trips over option labels the agent
+echoed in earlier questions). Without a pre-selected group the graph resolves the destination/origin
+from the conversation against a fixed **destination catalogue**
+([`agent/baselines/travel_catalog.py`](../agent/baselines/travel_catalog.py)); a destination that is
+not in the catalogue (or a country with several catalogue cities, or a missing departure city)
+produces a `clarifying_question` whose `options` list the destinations/cities the agent can actually
+plan — closed options, not freeform-only.
 
 A `message` event is emitted **only for the `info` outcome**. For every structured outcome the
 backend already produces the user-facing assistant message itself (the plan-ready message for
@@ -143,8 +160,11 @@ npx @redocly/cli preview-docs agent-service/openapi.yaml   # interactive docs
 
 ## 8. Open items
 
-- Pass conversation history / active plan context from the backend into `POST /v1/runs` so the Final
-  graph can handle multi-turn replanning beyond `thread_id`.
+- Multi-turn memory is currently the full transcript threaded into a single-shot graph; persistent
+  LangGraph checkpoints (below) would let the graph keep structured state across turns instead.
+- The destination catalogue ([`travel_catalog.py`](../agent/baselines/travel_catalog.py)) is hardcoded
+  to the seed dataset; derive it from Contract B (e.g. a `/internal/destinations` endpoint) once the
+  Final graph reads offers over HTTP.
 - Replace local CSV access inside the experimental Final graph with HTTP tools over Contract B.
 - Persistent LangGraph checkpoints instead of the current in-memory run/thread store.
 - mTLS / service-to-service JWT with scopes — upgrade from static tokens after the prototype.

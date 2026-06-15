@@ -23,27 +23,33 @@ class Planner:
         self._runtime_lock = asyncio.Lock()
         self.active_planner = "final_agent"
 
-    async def plan(self, run: CreateRunRequest) -> PlannerResult:
+    async def plan(self, run: CreateRunRequest, thread: Any | None = None) -> PlannerResult:
         if self._final_runtime is None:
             # Serialize the heavyweight, side-effectful runtime construction so concurrent runs
             # cannot both build it (sys.path / os.environ / module globals are process-shared).
             async with self._runtime_lock:
                 if self._final_runtime is None:
                     self._final_runtime = _FinalAgentRuntime(self._settings)
-        user_text = self._user_text(run)
-        if not user_text:
+        latest = user_text(run)
+        if not latest:
             return PlannerResult(
                 outcome_type="clarification",
                 message="Уточните, пожалуйста, что нужно подобрать или изменить.",
                 question_text="Что нужно подобрать или изменить?",
             )
 
+        # Conversation memory: the agent graph is single-shot, so we feed it the whole
+        # transcript (so it never re-asks for something already said) plus the user-only text
+        # (so deterministic destination/origin matching never trips over the agent's own
+        # option labels echoed back in its prior questions).
+        transcript, user_only = _conversation(thread, latest)
         raw = await self._final_runtime.run(
             {
                 "case_id": run.external_run_id or run.correlation_id,
                 "category": _category_for_mode(run.mode),
                 "group_id": run.group_id,
-                "user_request": user_text,
+                "user_request": transcript,
+                "user_text_only": user_only,
             }
         )
         draft = _parse_agent_json(raw)
@@ -57,57 +63,60 @@ class Planner:
 
         context = await self._group_context(run)
         entities = draft.get("entities") if isinstance(draft.get("entities"), dict) else {}
+        plan_block = draft.get("plan") if isinstance(draft.get("plan"), dict) else {}
+        options = [str(o).strip() for o in (draft.get("options") or []) if str(o).strip()]
         result = PlannerResult(
             outcome_type=_coerce_outcome(draft.get("outcome_type")),
             message=str(draft.get("answer") or ""),
             flight_id=entities.get("flight_id"),
             hotel_id=entities.get("hotel_id"),
             tour_id=entities.get("tour_id"),
-            origin_city=context.get("origin_city"),
-            destination=context.get("destination"),
-            start_date=context.get("start_date"),
-            end_date=context.get("end_date"),
+            origin_city=plan_block.get("origin_city") or context.get("origin_city"),
+            destination=plan_block.get("destination") or context.get("destination"),
+            start_date=plan_block.get("start_date") or context.get("start_date"),
+            end_date=plan_block.get("end_date") or context.get("end_date"),
+            estimated_total_rub=_as_int(plan_block.get("estimated_total_rub")),
             decision_rationale=str(draft.get("answer") or ""),
+            question_options=options,
         )
 
         if result.outcome_type == "recommendation":
-            # A recommendation may only be emitted once the backend has validated the draft
-            # (SPECIFICATION.md §3). Validation requires a group_id (Contract B
-            # POST /internal/plans/validate body), and on any failure/unavailability we must
-            # NOT fail open — we downgrade to clarification instead of recommending unvalidated.
+            if not (result.flight_id or result.hotel_id or result.tour_id):
+                # A recommendation with no concrete selection is not actionable — clarify.
+                return PlannerResult(
+                    outcome_type="clarification",
+                    message=result.message or "Уточните, пожалуйста, детали поездки.",
+                    question_text=result.message or "Уточните, пожалуйста, детали поездки.",
+                    question_options=options,
+                )
+            # SPECIFICATION.md §3: a recommendation must be validated before it is emitted.
+            # When a group_id is present we validate via Contract B and never fail open. Without
+            # a group_id the backend re-validates the draft at persist time (it ignores
+            # `plan_status: ready` until the draft passes validate_selection and is stored), so
+            # the backend remains the authority — we forward the agent's grounded recommendation.
             if run.group_id:
                 validation = await self._validate_ids(
                     run, result.flight_id, result.hotel_id, result.tour_id
                 )
-            else:
-                validation = {
-                    "valid": False,
-                    "hard_violations": [
-                        {
-                            "code": "validation_unavailable",
-                            "message": "невозможно проверить план без group_id",
-                        }
-                    ],
-                }
-            if not bool(validation.get("valid", True)):
-                reasons = [
-                    item.get("message", item.get("code", "нарушение ограничения"))
-                    for item in validation.get("hard_violations", [])
-                ] or ["backend validation rejected the draft plan"]
-                return PlannerResult(
-                    outcome_type="clarification",
-                    message="Нужно уточнить условия: " + "; ".join(reasons),
-                    question_text="Какое условие можно смягчить?",
-                    question_options=reasons,
-                    flight_id=result.flight_id,
-                    hotel_id=result.hotel_id,
-                    tour_id=result.tour_id,
-                    origin_city=result.origin_city,
-                    destination=result.destination,
-                    start_date=result.start_date,
-                    end_date=result.end_date,
-                    decision_rationale=result.decision_rationale,
-                )
+                if not bool(validation.get("valid", True)):
+                    reasons = [
+                        item.get("message", item.get("code", "нарушение ограничения"))
+                        for item in validation.get("hard_violations", [])
+                    ] or ["backend validation rejected the draft plan"]
+                    return PlannerResult(
+                        outcome_type="clarification",
+                        message="Нужно уточнить условия: " + "; ".join(reasons),
+                        question_text="Какое условие можно смягчить?",
+                        question_options=reasons,
+                        flight_id=result.flight_id,
+                        hotel_id=result.hotel_id,
+                        tour_id=result.tour_id,
+                        origin_city=result.origin_city,
+                        destination=result.destination,
+                        start_date=result.start_date,
+                        end_date=result.end_date,
+                        decision_rationale=result.decision_rationale,
+                    )
 
         if result.outcome_type == "clarification" and not result.question_text:
             result.question_text = result.message
@@ -155,15 +164,53 @@ class Planner:
             }
 
     def _user_text(self, run: CreateRunRequest) -> str:
-        if run.mode in {"new_trip", "qa"} and run.message:
-            return run.message
-        if run.mode == "answer" and run.answer:
-            return run.answer.freeform or " ".join(
-                run.answer.selected_option_labels or run.answer.selected_option_ids or []
-            )
-        if run.mode == "modify" and run.route_edits:
-            return run.route_edits.get("note") or "пересобери маршрут"
-        return ""
+        # Kept for back-compat (callers/tests that reach for Planner._user_text); the logic
+        # lives in the module-level ``user_text`` so runs.py can reuse it without a Planner.
+        return user_text(run)
+
+
+def user_text(run: CreateRunRequest) -> str:
+    """The plain user text of a run, regardless of mode (message / answer / modify note)."""
+    if run.mode in {"new_trip", "qa"} and run.message:
+        return run.message
+    if run.mode == "answer" and run.answer:
+        return run.answer.freeform or " ".join(
+            run.answer.selected_option_labels or run.answer.selected_option_ids or []
+        )
+    if run.mode == "modify" and run.route_edits:
+        return run.route_edits.get("note") or "пересобери маршрут"
+    return ""
+
+
+def _conversation(thread: Any | None, latest: str) -> tuple[str, str]:
+    """Build (full transcript, user-only text) from a thread's accumulated messages.
+
+    ``thread.messages`` already includes the current user turn (runs.py appends it before
+    planning), so the transcript is the complete dialogue. When there is no thread we fall
+    back to the single latest turn (e.g. QA / first message)."""
+    messages = getattr(thread, "messages", None) or []
+    if not messages:
+        return latest, latest
+    lines: list[str] = []
+    user_only: list[str] = []
+    for message in messages:
+        content = str(message.get("content") or "").strip()
+        if not content:
+            continue
+        if message.get("role") == "user":
+            lines.append(f"Пользователь: {content}")
+            user_only.append(content)
+        else:
+            lines.append(f"Ассистент: {content}")
+    transcript = "\n".join(lines) or latest
+    return transcript, ("\n".join(user_only) or latest)
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _category_for_mode(mode: str) -> str:

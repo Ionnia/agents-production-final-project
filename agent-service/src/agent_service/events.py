@@ -5,20 +5,40 @@ from typing import Any
 
 from .schemas import PlannerResult
 
-# Minimal coordinate lookup for dataset cities / airport codes (lat, lng). Unknown → None (skipped).
+# Coordinate lookup for dataset cities / airport codes (lat, lng), keyed by the airport code,
+# the English name AND the Russian label the planner emits (group-less path → «Стамбул», group
+# path via Contract B → "IST"). Unknown → None (skipped). Covers every dataset destination.
 _COORDS: dict[str, tuple[float, float]] = {
+    # Origins
     "MOSCOW": (55.7558, 37.6173),
+    "МОСКВА": (55.7558, 37.6173),
     "SVO": (55.7558, 37.6173),
+    "DME": (55.7558, 37.6173),
+    "VKO": (55.7558, 37.6173),
+    "ST PETERSBURG": (59.9311, 30.3609),
     "SAINT PETERSBURG": (59.9311, 30.3609),
     "SAINT-PETERSBURG": (59.9311, 30.3609),
+    "САНКТ-ПЕТЕРБУРГ": (59.9311, 30.3609),
+    "LED": (59.9311, 30.3609),
+    # Destinations
     "IST": (41.0082, 28.9784),
     "ISTANBUL": (41.0082, 28.9784),
+    "СТАМБУЛ": (41.0082, 28.9784),
+    "AYT": (36.8841, 30.7056),
+    "ANTALYA": (36.8841, 30.7056),
+    "АНТАЛЬЯ": (36.8841, 30.7056),
     "DXB": (25.2048, 55.2708),
     "DUBAI": (25.2048, 55.2708),
+    "ДУБАЙ": (25.2048, 55.2708),
+    "BKK": (13.7563, 100.5018),
+    "BANGKOK": (13.7563, 100.5018),
+    "БАНГКОК": (13.7563, 100.5018),
     "BCN": (41.3874, 2.1686),
     "BARCELONA": (41.3874, 2.1686),
+    "БАРСЕЛОНА": (41.3874, 2.1686),
     "HKT": (7.8804, 98.3923),
     "PHUKET": (7.8804, 98.3923),
+    "ПХУКЕТ": (7.8804, 98.3923),
 }
 
 

@@ -16,6 +16,7 @@ async def validate_selection(
     group: TravelGroup | None,
     selection: PlanSelectionForValidation,
     constraints: dict[str, Any] | None = None,
+    nights_override: int | None = None,
 ) -> dict[str, Any]:
     constraints = constraints or {}
     hard: list[dict[str, str]] = []
@@ -45,9 +46,14 @@ async def validate_selection(
                 )
             )
 
+    # Nights drive the hotel subtotal. Prefer the group's dates; without a group (free-form
+    # chat plan) the caller passes the draft's trip length so the total isn't undercounted to
+    # a single night.
     nights = 1
     if group and group.start_date and group.end_date:
         nights = max((group.end_date - group.start_date).days, 1)
+    elif nights_override and nights_override > 0:
+        nights = int(nights_override)
 
     if tour:
         total = tour.total_price_rub

@@ -54,11 +54,29 @@ balance at outcome 0.85 / entity 1.0:
   requirements — the requirement list is not hard-coded. The **agents still decide** — Supervisor and
   Critic (LLM) pick `outcome_type` from those reliable facts: `recommendation` only if `within_budget`
   **and** the chosen plan meets every stated hard requirement; otherwise **default `clarification`**,
-  with `rejection` reserved for an explicit no-compromise request. Graph: `context → intent → specialists →
-  feasibility → supervisor → finalizer → critic → (replan | end)`. This is B2's winning pattern —
+  with `rejection` reserved for an explicit no-compromise request. Graph: `resolve → (clarify |
+  load_context → intent → specialists → feasibility → supervisor → finalizer → critic → (replan |
+  end))`. This is B2's winning pattern —
   deterministic facts as a tool, agentic decision — plus B3's specialists, targeting high `outcome`
   **and** high `entity`. (An earlier fully-agentic FeasibilityAgent variant over-rejected because an
   LLM budget verdict is itself noisy; a calculator-tool restores B2's reliable grounding.)
+
+  **Production-chat capabilities (group-less + multi-turn).** The QA harness passes a `group_id` and
+  that path is unchanged — `resolve` no-ops and `load_context` pre-filters offers by the group's
+  destination/origin exactly as before. For the live chat (no pre-selected group), the new `resolve`
+  node extracts destination/origin from the conversation and maps them against a fixed **destination
+  catalogue** ([`baselines/travel_catalog.py`](./baselines/travel_catalog.py), derived from the seed
+  offers: IST/AYT/DXB/BKK/HKT/BCN from Moscow/St Petersburg), plus an LLM pass for dates/budget/party
+  size. `route_resolve` then routes either to `clarify` — a deterministic `clarification` whose
+  `options` list the destinations/cities the agent can actually plan (so an out-of-catalogue request
+  like «Греция», an ambiguous country, or a missing departure city yields **closed options**, not a
+  freeform-only loop) — or to `load_context`, which loads offers group-lessly by the resolved
+  destination/origin. `feasibility` works without a group (nights/budget come from the extracted
+  facts), and the finalizer attaches a structured `plan` block (origin/destination/dates/total) plus
+  the clarification `options` to the output JSON for the Agent Service to map onto Contract A. The
+  agent-service planner feeds the **whole conversation transcript** into this single-shot graph, which
+  is how multi-turn memory is achieved without persistent checkpoints (see
+  [`agent-service/SPECIFICATION.md`](../agent-service/SPECIFICATION.md) §3).
 
 ## Scope
 
@@ -85,7 +103,8 @@ Out of scope:
 | `baselines/llm_tool_rag_baseline.py` | **B1** — single-agent Tool+RAG baseline on one QA case or all cases. |
 | `baselines/langgraph_plan_validate_baseline.py` | **B2** — LangGraph draft→validate→replan loop; reuses B1's agent + tools. |
 | `baselines/mas_supervisor_baseline.py` | **B3** — MAS structured pipeline (intent + specialists + supervisor + critic). |
-| `baselines/final_agent.py` | **Final** — B3 entity machinery + agentic FeasibilityAgent grounding the outcome; reuses B3 nodes. |
+| `baselines/final_agent.py` | **Final** — B3 entity machinery + agentic FeasibilityAgent grounding the outcome; reuses B3 nodes; adds resolve/clarify nodes for group-less, multi-turn chat. |
+| `baselines/travel_catalog.py` | Dependency-free destination catalogue + deterministic destination/origin matching used by the Final graph (and reused by the Agent Service planner). |
 | `baselines/evaluate_predictions.py` | Scores baseline JSONL predictions against expected QA outcomes/entities. |
 
 ## Commands

@@ -10,7 +10,7 @@ from typing import Any
 from .config import Settings
 from .contract_b import ContractBClient, ContractBError
 from .events import events_for
-from .planner import Planner
+from .planner import Planner, user_text
 from .schemas import CreateRunRequest
 
 TERMINAL = {"completed", "cancelled", "error"}
@@ -107,10 +107,14 @@ class RunManager:
     async def _execute(self, run: Run, req: CreateRunRequest, thread: ThreadState) -> None:
         try:
             await self._emit(run, "run_status", {"agent_run_id": run.agent_run_id, "status": "running"})
-            if req.message:
-                thread.messages.append({"role": "user", "content": req.message, "created_at": _now()})
+            # Record the user turn for EVERY mode (message / answer / modify), not just
+            # `new_trip`, so the thread carries the full dialogue into the next run — otherwise
+            # clarifying answers were dropped from memory and the agent re-asked.
+            turn = user_text(req)
+            if turn:
+                thread.messages.append({"role": "user", "content": turn, "created_at": _now()})
 
-            result = await self._planner.plan(req)
+            result = await self._planner.plan(req, thread)
             thread.state["last_outcome"] = result.outcome_type
             thread.messages.append({"role": "assistant", "content": result.message, "created_at": _now()})
             thread.updated_at = _now()

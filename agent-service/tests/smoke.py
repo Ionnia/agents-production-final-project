@@ -101,7 +101,7 @@ check("answer text uses selected labels", answer_text == "Увеличить б�
 # ── 3. run/SSE pipeline with fake planner ─────────────────────────────────────────────────────
 class FakePlanner:
     active_planner = "fake"
-    async def plan(self, req: CreateRunRequest) -> PlannerResult:
+    async def plan(self, req: CreateRunRequest, thread=None) -> PlannerResult:
         return rec
 
 

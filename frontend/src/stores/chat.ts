@@ -27,6 +27,10 @@ export const useChatStore = defineStore('chat', () => {
     sessionId.value = id
     planStatus.value = null
     planId.value = null
+    // Restore the most recent plan so its inline approval card survives a reload/navigation
+    // (the card fetches the plan and renders the real accepted/ready state itself).
+    const lastPlan = [...msgs].reverse().find(m => m.plan_ref?.plan_id)
+    if (lastPlan?.plan_ref?.plan_id) { planId.value = lastPlan.plan_ref.plan_id; planStatus.value = 'ready' }
     const last = msgs.at(-1)
     pendingQuestion.value = last?.question ?? null
     // The active (trailing) clarifying question renders as the question panel, not

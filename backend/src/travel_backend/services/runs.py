@@ -234,7 +234,14 @@ async def persist_draft(
             422, "validation_error", details={"source": "agent_plan", "reason": str(exc)}
         ) from exc
     group = await get_group(db, run.group_id)
-    validation = await validate_selection(db, group, draft.selections)
+    # Without a group the agent supplies the trip dates on the draft; use them so the hotel
+    # subtotal reflects the real number of nights rather than defaulting to one.
+    nights_override = None
+    if not group and draft.start_date and draft.end_date:
+        nights_override = max((draft.end_date - draft.start_date).days, 1)
+    validation = await validate_selection(
+        db, group, draft.selections, nights_override=nights_override
+    )
     if group and group.destination and draft.destination and draft.destination != group.destination:
         validation["valid"] = False
         validation["hard_violations"].append(

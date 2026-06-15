@@ -53,7 +53,15 @@ A chat message creates a **run** (one agent turn). The backend opens a run on th
 (`POST /v1/runs`) and forwards the agent's streamed events to the frontend's SSE: assistant text,
 clarifying questions, map snapshots, and a `plan_status` of `building → ready | error`. While a plan
 is not `ready` the map is read-only. The user corrects the route by submitting a batch of
-added/removed points, which starts a new rebuild run. Lifecycles:
+added/removed points, which starts a new rebuild run.
+
+The conversation is **stateful across turns**: every user turn is recorded on the agent thread and
+the whole transcript is fed back into the agent, so it never re-asks for facts already given. A user
+can plan **without first selecting a group** — the agent resolves the destination/origin from the
+conversation against its destination catalogue and asks closed **clarifying questions with selectable
+options** (e.g. the available destinations) when something is missing or out of catalogue. When the
+plan is ready it is presented **inline in the chat for approval** (map link, flight/hotel/tour,
+total); accepting persists it. Lifecycles:
 [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) (frontend↔backend) and
 [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) (backend↔agent).
 

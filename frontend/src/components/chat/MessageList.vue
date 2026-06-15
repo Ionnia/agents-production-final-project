@@ -3,6 +3,7 @@ import { computed, watch, nextTick, useTemplateRef } from 'vue'
 import MessageBubble from './MessageBubble.vue'
 import ClarifyingQuestion from './ClarifyingQuestion.vue'
 import PlanStatus from './PlanStatus.vue'
+import PlanCard from './PlanCard.vue'
 import type { ClarifyingQuestion as CQ } from '../../api/types'
 
 const props = defineProps<{
@@ -26,7 +27,8 @@ watch(() => [props.messages.map(m => m.content).join(''), props.question, props.
     <div v-if="thinking" class="thinking glass" role="status" aria-label="Агент думает">
       <span class="d" /><span class="d" /><span class="d" />
     </div>
-    <PlanStatus v-if="planStatus" :status="planStatus" :plan-id="planId" />
+    <PlanCard v-if="planStatus === 'ready' && planId" :plan-id="planId" />
+    <PlanStatus v-else-if="planStatus" :status="planStatus" :plan-id="planId" />
     <ClarifyingQuestion v-if="question" :question="question" @answer="(o, f) => emit('answer', o, f)" />
   </div>
 </template>

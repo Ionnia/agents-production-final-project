@@ -63,7 +63,14 @@ ownership is taken from the per-run group snapshot (`Run.group_id`) captured whe
 created, not from the session's current group, so re-pointing a session at a different group does
 not retroactively re-target an older run. Stay-length pricing floors the trip to at least one night
 for same-day groups, and the serialized hotel `nights` applies the same floor so the displayed
-nights and recalculated total stay consistent.
+nights and recalculated total stay consistent. A run **without** a group (free-form chat plans, the
+common case) still validates and persists: `validate_selection` tolerates `group=None` (it checks the
+offers exist and is skipped destination/preference checks that need a group), and `persist_draft`
+passes the draft's own trip dates as a `nights_override` so the hotel subtotal reflects the real trip
+length instead of defaulting to a single night. The agent-side recommendation gate is relaxed for
+group-less runs (it cannot call Contract B `validate` without a `group_id`), but the backend remains
+the authority — an agent `ready` is still ignored until the draft passes this validation and is
+persisted.
 
 Map points keep normalized route coordinates and ordering in columns, with validated optional
 place-card attributes stored as JSON. Public map fields are flat and backward-compatible.
