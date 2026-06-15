@@ -15,13 +15,22 @@ long dataset tables tucked into collapsible `<details>` blocks).
 
 ## Assets
 
-Source files in `docs/readme_assets/`:
+Source files in `docs/readme_assets/` (all 4K). **Originals are git-ignored; only the compressed
+WebP versions are committed.**
 
-| File | Source state | Action |
+| Original (git-ignored) | Source state | Committed artifact |
 |---|---|---|
-| `demo_movie.mov` | 1.0 GB, 4K 3840×2072, 120 fps, H.264 ~69 Mbps, **no audio** | Source for 3 re-encodes; **never committed** |
-| `login_screen.png` | 13 MB, 4K 3840×2064 | Resize ~1600 px wide, recompress PNG (<500 KB); committed |
-| `authorized_screen.png` | 13 MB, 4K 3840×2064 | Resize ~1600 px wide, recompress PNG (<500 KB); committed |
+| `demo_movie.mov` | 1.0 GB, 3840×2072, 120 fps, H.264 ~69 Mbps, **no audio** | none — source for the 3 encodes |
+| `login_screen.png` | 13 MB, 3840×2064 | `login_screen.webp` |
+| `authorized_screen.png` | 13 MB, 3840×2064 | `authorized_screen.webp` |
+| `chat_with_agent.png` | 13 MB, 3840×2064 | `chat_with_agent.webp` |
+| `side_panel.png` | 12 MB, 3840×2064 | `side_panel.webp` |
+| `plan_ready.png` | 11 MB, 3840×2064 | `plan_ready.webp` |
+
+Screenshots are resized to 1920 px wide and encoded to WebP with the slowest/highest-quality method
+(`-quality 92 -define webp:method=6 -define webp:use-sharp-yuv=1`), landing ~0.6–0.8 MB each
+(~62 MB → ~3.5 MB). A `demo_poster.webp` frame (~8 s into the demo) is also committed as the video
+poster.
 
 ### Video encodes (3 versions for the user to choose)
 
@@ -49,8 +58,10 @@ through its web editor, which yields a `user-attachments` URL. The README theref
    markdown editor → copy the returned `user-attachments` URL → paste into `src`.
 3. A poster frame + plain link as a fallback so the README never looks broken pre-upload.
 
-The encoded `demo_*.mp4` files are local artifacts for the user to choose from and upload; they are
-**git-ignored**, not committed (the inline embed uses the uploaded URL, not a repo file).
+Encode results (all under GitHub's 100 MB limit): `demo_1080p.mp4` 18 MB · `demo_1440p.mp4` 35 MB ·
+`demo_4k.mp4` 63 MB. **Chosen variant: `demo_1440p.mp4` (2K).** The `demo_*.mp4` files are
+local artifacts to upload from; they are **git-ignored**, not committed (the inline embed uses the
+uploaded URL, not a repo file). `demo_poster.webp` stands in until the upload is done.
 
 ## README structure (Approach 1, Russian)
 
@@ -59,7 +70,8 @@ The encoded `demo_*.mp4` files are local artifacts for the user to choose from a
 2. **Возможности** — what the agent can do, scannable bullets: планирование, перепланирование,
    конфликты предпочтений, лимиты бюджета, уточнения, эскалация, RAG-ответы по политикам, учёт
    состава группы, карта/календарь в UI
-3. **Скриншоты** — login + authorized
+3. **Скриншоты** — showcase of the 5 screens: login, «Куда отправимся?» welcome, чат с агентом
+   (с выбором направления), боковая панель (Группы/Планы/История), готовый план (карта + цены)
 4. **Содержание** (table of contents)
 5. **Архитектура** — existing module table + ASCII diagram + `SPECIFICATION.md` link
 6. **Запуск** — Docker + local; long no-Docker variant inside `<details>`
@@ -71,9 +83,9 @@ Every technical detail currently in the README is preserved — reorganized, not
 
 ## Housekeeping
 
-- Add to `.gitignore`: `docs/readme_assets/demo_movie.mov` and `docs/readme_assets/demo_*.mp4`
-  (keeps the 1 GB source and heavy encodes out of git history).
-- Commit only the optimized screenshots.
+- Add to `.gitignore`: the 4K originals — `docs/readme_assets/*.png`, `docs/readme_assets/*.mov`,
+  `docs/readme_assets/*.mp4` (keeps the 1 GB source, heavy encodes, and 4K PNGs out of git history).
+- Commit only the compressed `*.webp` artifacts.
 - **No `SPECIFICATION.md` change** — architecture, contracts, and modules are unchanged; this is
   presentation only. (Noted explicitly because repo rules require specs to track code.)
 
