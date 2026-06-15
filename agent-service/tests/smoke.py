@@ -21,7 +21,8 @@ from agent_service.config import Settings  # noqa: E402
 from agent_service.events import events_for  # noqa: E402
 from agent_service.main import app  # noqa: E402
 from agent_service.runs import RunManager  # noqa: E402
-from agent_service.schemas import CreateRunRequest, PlannerResult  # noqa: E402
+from agent_service.planner import Planner  # noqa: E402
+from agent_service.schemas import Answer, CreateRunRequest, PlannerResult  # noqa: E402
 
 TOKEN = "test-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}", "X-Correlation-ID": "corr-1"}
@@ -62,15 +63,39 @@ with TestClient(app) as client:
 rec = PlannerResult(outcome_type="recommendation", message="ok", flight_id="FL-102",
                     hotel_id="HT-045", destination="IST", origin_city="Moscow", estimated_total_rub=130500)
 names = [n for n, _ in events_for(rec, "ar1")]
-check("recommendation event order", names == ["plan_status", "plan", "plan_status", "message", "run_status"])
+# No redundant `message` event: the backend persists/relays the plan-ready message itself,
+# so emitting one here duplicated the assistant bubble.
+check("recommendation event order", names == ["plan_status", "plan", "plan_status", "run_status"])
 plan_data = events_for(rec, "ar1")[1][1]["plan"]
 check("plan has selections", plan_data["selections"]["flight_id"] == "FL-102")
 check("plan has map_points", len(plan_data["map_points"]) >= 1)
 
 clar = PlannerResult(outcome_type="clarification", message="?", question_text="q", question_options=["a"])
-check("clarification emits question", [n for n, _ in events_for(clar, "ar1")][0] == "clarifying_question")
+clar_names = [n for n, _ in events_for(clar, "ar1")]
+check("clarification emits question", clar_names[0] == "clarifying_question")
+# The question carries the user-facing text; no separate `message` event (it duplicated it).
+check("clarification has no duplicate message event", "message" not in clar_names)
 rej = PlannerResult(outcome_type="rejection", message="no", suggested_relaxations=["x"])
 check("rejection -> constraints_conflict + outcome", events_for(rej, "ar1")[-1][1]["outcome"] == "constraints_conflict")
+info = PlannerResult(outcome_type="info", message="just info")
+check("info still emits its message", [n for n, _ in events_for(info, "ar1")] == ["message", "run_status"])
+
+answer_text = Planner._user_text(
+    object.__new__(Planner),
+    CreateRunRequest(
+        external_run_id="answer-1",
+        correlation_id="corr-answer",
+        session_id="s1",
+        user_id="u1",
+        mode="answer",
+        answer=Answer(
+            in_reply_to_question_id="q-budget",
+            selected_option_ids=["o0"],
+            selected_option_labels=["Увеличить бюджет"],
+        ),
+    ),
+)
+check("answer text uses selected labels", answer_text == "Увеличить бюджет")
 
 
 # ── 3. run/SSE pipeline with fake planner ─────────────────────────────────────────────────────

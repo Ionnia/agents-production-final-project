@@ -12,6 +12,7 @@ RunMode = Literal["new_trip", "modify", "answer", "qa"]
 class Answer(BaseModel):
     in_reply_to_question_id: str
     selected_option_ids: list[str] | None = None
+    selected_option_labels: list[str] | None = None
     freeform: str | None = None
 
 

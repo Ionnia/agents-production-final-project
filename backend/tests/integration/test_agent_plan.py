@@ -20,6 +20,7 @@ async def test_agent_ready_is_gated_until_valid_draft_is_persisted(client, uniqu
         run = Run(
             session_id=session.id,
             user_id=user.id,
+            group_id="G-0001",
             correlation_id="agent-plan-test",
             mode="new_trip",
             input_payload={"message": "Подбери поездку"},

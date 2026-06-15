@@ -1,6 +1,6 @@
 # API Module — Specification
 
-**Status:** Contract defined and implemented by `backend/`; frontend API integration is pending.
+**Status:** Frozen contract; implemented by `backend/` and consumed (typed) by `frontend/` via `openapi-typescript`.
 **Artifact:** [`api/openapi.yaml`](./openapi.yaml) — OpenAPI 3.1 ("Swagger"), validated with
 `@redocly/cli lint`.
 **Design rationale:** [`docs/superpowers/specs/2026-06-13-travel-agent-api-design.md`](../docs/superpowers/specs/2026-06-13-travel-agent-api-design.md).
@@ -40,6 +40,9 @@ the agent's internal tools/prompts and the SQLite schema (owned by the backend).
 **Clarifying questions** are closed (mutually exclusive options) with an optional freeform field.
 They are answered by reusing `POST /chat` with
 `{ in_reply_to_question_id, selected_option_ids?, freeform? }` — no separate endpoint.
+Persisted answer history may also include backend-resolved `selected_option_labels` so clients and
+downstream services can display/read the selected option text without treating opaque option ids as
+user language.
 
 ## 3. Authentication
 

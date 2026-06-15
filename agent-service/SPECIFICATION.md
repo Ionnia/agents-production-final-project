@@ -33,12 +33,15 @@ Frontend ──REST/SSE──▶ Backend API (BFF)  ◀── owns: users, sessi
 
 The frontend never calls the agent. The agent **proposes** a draft plan; the backend **validates and
 persists** (via the already-frozen plan endpoints in [`api/openapi.yaml`](../api/openapi.yaml)).
+For clarification answers, the backend may send both stable `selected_option_ids` and resolved
+`selected_option_labels`; the planner uses the labels for user text and falls back to IDs only when
+labels are unavailable.
 
 ## 2. Architecture decisions
 
 | Decision | Choice |
 |---|---|
-| Agent state | In-memory run/thread store for MVP; backend sends new turns with `thread_id`. Persistent LangGraph checkpoints are a follow-up. |
+| Agent state | In-memory run/thread store for MVP; backend sends new turns with `thread_id`. Runs, threads, and per-run SSE event buffers are retained for the process lifetime (no eviction yet) so streams can be reconnected via `Last-Event-ID`; size-bounded retention and persistent LangGraph checkpoints are a follow-up. |
 | Data access | Agent owns policy RAG and local experimental graph data access; recommendation drafts are validated via Backend Contract B. |
 | Run model | **Two-call**: `POST /v1/runs` → `stream_url`, then `GET /v1/runs/{id}/stream` (SSE). |
 | Event vocabulary | **Stable semantic events** + one optional `observability` event (raw LangGraph steps). |
@@ -76,9 +79,19 @@ persists** (via the already-frozen plan endpoints in [`api/openapi.yaml`](../api
 
 **Run lifecycle:** `POST /v1/runs` → open `…/stream` → Final agent graph reasons → the service maps
 the graph output to Contract A semantic events. Before a `recommendation` is emitted, the service
-calls `POST /internal/plans/validate`; on `valid=false` it downgrades to `clarification`. On a `plan`
-event the backend validates again and persists; terminal `run_status` carries the `outcome`. The
-backend normalizes these semantic events into the frontend vocabulary it already exposes.
+calls `POST /internal/plans/validate`; on `valid=false` it downgrades to `clarification`. The gate
+**never fails open**: if validation cannot be performed — the backend is unreachable/errors, or the
+run carries no `group_id` (which `POST /internal/plans/validate` requires) — the recommendation is
+also downgraded to `clarification` rather than emitted unvalidated. On a `plan` event the backend
+validates again and persists; terminal `run_status` carries the `outcome`. The backend normalizes
+these semantic events into the frontend vocabulary it already exposes.
+
+A `message` event is emitted **only for the `info` outcome**. For every structured outcome the
+backend already produces the user-facing assistant message itself (the plan-ready message for
+`recommendation`, the question text for `clarification`, and the localized escalation/conflict text
+for `escalation`/`constraints_conflict`), so the service no longer also emits a redundant `message` —
+doing so previously made the backend persist two assistant rows for one turn (a duplicated answer
+bubble, identical text for clarifications).
 
 ## 4. Contract B — Backend Internal Tool API (`/internal`)
 

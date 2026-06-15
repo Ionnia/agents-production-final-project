@@ -890,6 +890,11 @@ components:
         selected_option_ids:
           type: array
           items: { type: string }
+        selected_option_labels:
+          type: array
+          items: { type: string }
+          readOnly: true
+          description: Labels resolved by the backend for persisted answer history.
         freeform: { type: string }
     PlanRef:
       type: object

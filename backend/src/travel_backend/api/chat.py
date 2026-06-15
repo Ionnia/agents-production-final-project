@@ -51,6 +51,43 @@ async def validate_user_group(db: Database, user_id: str, group_id: str) -> Trav
     return group
 
 
+async def selected_option_labels(
+    db: Database,
+    session_id: str,
+    question_id: str | None,
+    selected_option_ids: list[str] | None,
+) -> list[str]:
+    if not question_id or not selected_option_ids:
+        return []
+    questions = (
+        await db.scalars(
+            select(Message.question).where(
+                Message.session_id == session_id,
+                Message.role == "assistant",
+                Message.question.is_not(None),
+            )
+        )
+    ).all()
+    question = next(
+        (
+            item
+            for item in questions
+            if isinstance(item, dict) and item.get("id") == question_id
+        ),
+        None,
+    )
+    if not question:
+        return selected_option_ids
+    labels_by_id = {
+        option["id"]: option["label"]
+        for option in question.get("options", [])
+        if isinstance(option, dict)
+        and isinstance(option.get("id"), str)
+        and isinstance(option.get("label"), str)
+    }
+    return [labels_by_id.get(option_id, option_id) for option_id in selected_option_ids]
+
+
 @router.post("/chat", status_code=202)
 async def post_chat(
     body: ChatRequest,
@@ -97,6 +134,12 @@ async def post_chat(
         answer = None
     else:
         mode = "answer"
+        option_labels = await selected_option_labels(
+            db,
+            session.id,
+            body.in_reply_to_question_id,
+            body.selected_option_ids,
+        )
         answer = {
             "in_reply_to_question_id": body.in_reply_to_question_id,
             **(
@@ -104,10 +147,11 @@ async def post_chat(
                 if body.selected_option_ids
                 else {}
             ),
+            **({"selected_option_labels": option_labels} if option_labels else {}),
             **({"freeform": body.freeform} if body.freeform else {}),
         }
         payload = {"answer": answer, "locale": locale}
-        content = body.freeform or ", ".join(body.selected_option_ids or [])
+        content = body.freeform or ", ".join(option_labels or body.selected_option_ids or [])
 
     run = Run(
         session_id=session.id,
@@ -250,17 +294,10 @@ async def cancel_run(run_id: str, user: CurrentUser, db: Database) -> dict:
     run = await owned_run(db, user.id, run_id)
     if run.status in TERMINAL_STATUSES:
         raise APIError(409, "conflict")
-    agent_run_id = run.agent_run_id
     correlation_id = run.correlation_id
     await db.close()
 
-    if agent_run_id:
-        client = AgentServiceClient(get_settings())
-        try:
-            await client.cancel(agent_run_id, correlation_id)
-        finally:
-            await client.close()
-
+    agent_run_id: str | None = None
     async with SessionFactory() as write_db:
         cancelled = await write_db.execute(
             update(Run)
@@ -278,6 +315,8 @@ async def cancel_run(run_id: str, user: CurrentUser, db: Database) -> dict:
         if cancelled.rowcount != 1:
             await write_db.rollback()
             raise APIError(409, "conflict")
+        updated_run = await write_db.get(Run, run_id)
+        agent_run_id = updated_run.agent_run_id if updated_run else None
         await append_event(
             write_db,
             run_id,
@@ -285,6 +324,12 @@ async def cancel_run(run_id: str, user: CurrentUser, db: Database) -> dict:
             {"run_id": run_id, "status": "cancelled"},
         )
         await write_db.commit()
+    if agent_run_id:
+        client = AgentServiceClient(get_settings())
+        try:
+            await client.cancel(agent_run_id, correlation_id)
+        finally:
+            await client.close()
     return {"run_id": run_id, "status": "cancelling"}
 
 

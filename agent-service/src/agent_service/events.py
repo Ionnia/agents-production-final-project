@@ -62,6 +62,15 @@ def events_for(result: PlannerResult, agent_run_id: str) -> list[tuple[str, dict
             },
         )
 
+    # A `message` event is only emitted for the `info` outcome. For every structured
+    # outcome the backend already persists (and re-emits) the user-facing assistant
+    # message — the plan-ready message for `recommendation`, the question text for
+    # `clarification`, and the localized escalation/conflict text for
+    # `escalation`/`rejection`. Emitting an extra `message` here made the backend
+    # persist two assistant rows for the same turn, which surfaced as a duplicated
+    # answer bubble in the chat (most visibly for clarifications, where the question
+    # text and the message content are identical).
+
     if result.outcome_type == "recommendation":
         out.append(("plan_status", {"agent_run_id": agent_run_id, "status": "building"}))
         out.append(
@@ -86,7 +95,6 @@ def events_for(result: PlannerResult, agent_run_id: str) -> list[tuple[str, dict
             )
         )
         out.append(("plan_status", {"agent_run_id": agent_run_id, "status": "ready"}))
-        out.append(message_event())
         out.append(("run_status", {"agent_run_id": agent_run_id, "status": "completed", "outcome": "recommendation"}))
 
     elif result.outcome_type == "clarification":
@@ -99,7 +107,6 @@ def events_for(result: PlannerResult, agent_run_id: str) -> list[tuple[str, dict
             "allow_freeform": True,
         }
         out.append(("clarifying_question", {"agent_run_id": agent_run_id, "question": question}))
-        out.append(message_event())
         out.append(("run_status", {"agent_run_id": agent_run_id, "status": "completed", "outcome": "clarification"}))
 
     elif result.outcome_type == "rejection":
@@ -113,7 +120,6 @@ def events_for(result: PlannerResult, agent_run_id: str) -> list[tuple[str, dict
                 },
             )
         )
-        out.append(message_event())
         out.append(
             ("run_status", {"agent_run_id": agent_run_id, "status": "completed", "outcome": "constraints_conflict"})
         )
@@ -129,7 +135,6 @@ def events_for(result: PlannerResult, agent_run_id: str) -> list[tuple[str, dict
                 },
             )
         )
-        out.append(message_event())
         out.append(("run_status", {"agent_run_id": agent_run_id, "status": "completed", "outcome": "escalation"}))
 
     else:  # info

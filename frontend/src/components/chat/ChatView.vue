@@ -5,10 +5,9 @@ import ChatComposer from './ChatComposer.vue'
 import MessageList from './MessageList.vue'
 import { useChatStore } from '../../stores/chat'
 import { useSessionsStore } from '../../stores/sessions'
-import { useToasts } from '../../composables/useToasts'
 
 const props = defineProps<{ sessionId?: string }>()
-const chat = useChatStore(); const sessions = useSessionsStore(); const router = useRouter(); const { push } = useToasts()
+const chat = useChatStore(); const sessions = useSessionsStore(); const router = useRouter()
 const draft = ref('')
 const started = computed(() => chat.messages.length > 0)
 // Only animate the composer from centre → bottom when the user sends the first
@@ -37,17 +36,32 @@ async function onSubmit(text: string) {
   const wasNew = !props.sessionId
   if (!started.value) animate.value = true // hero → chat: slide the composer down
   try {
-    await chat.send(text)
-    if (chat.sessionId && wasNew) router.replace(`/c/${chat.sessionId}`)
+    if (chat.pendingQuestion) {
+      await chat.answer(chat.pendingQuestion.id, [], text)
+      await chat.waitForIdle()
+      sessions.loadList()
+      return
+    }
+    // `send` resolves as soon as the run is accepted (session id known), so the URL
+    // updates immediately instead of after the whole agent run; the reply then
+    // streams into the store live on the /c/:id route.
+    const acc = await chat.send(text)
+    if (wasNew && acc.session_id) router.replace(`/c/${acc.session_id}`)
+    await chat.waitForIdle()
     sessions.loadList() // refresh history so the new/updated chat appears in the side panel
   } catch {
-    push({ kind: 'error', text: 'Не удалось получить ответ. Попробуйте ещё раз.' })
+    // Failure to even start the run is surfaced by the store toast; nothing to add.
   }
 }
 async function onAnswer(optionIds: string[], freeform?: string) {
   if (chat.running || !chat.pendingQuestion) return
-  await chat.answer(chat.pendingQuestion.id, optionIds, freeform)
-  sessions.loadList()
+  try {
+    await chat.answer(chat.pendingQuestion.id, optionIds, freeform)
+    await chat.waitForIdle()
+    sessions.loadList()
+  } catch {
+    // Surfaced by the store toast.
+  }
 }
 </script>
 

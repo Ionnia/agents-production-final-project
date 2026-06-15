@@ -24,12 +24,24 @@ class CaseState(TypedDict):
     drafts: int
 
 
+def safe_int(value: Any) -> int | None:
+    """Толерантный int для CSV-полей: пустая/нечисловая ячейка не должна ронять узел графа."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def dump_draft(draft: dict[str, Any]) -> str:
     return json.dumps(draft, ensure_ascii=False, separators=(",", ":"))
 
 
 def parse_draft(text: str) -> dict[str, Any]:
     """Толерантный разбор финального JSON-ответа агента."""
+    # GigaChat иногда подставляет служебный токен <|superquote|> вместо кавычки;
+    # нормализуем его так же, как оффлайн-оценщик (evaluate_predictions.parse_prediction),
+    # иначе валидный по смыслу ответ распарсился бы в {} на рантайме.
+    text = text.replace("<|superquote|>", '"')
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -105,24 +117,24 @@ def best_flight_for_group(group: dict[str, Any], case: dict[str, Any]) -> str | 
 
     def score(row: dict[str, str]) -> tuple[int, int]:
         points = 0
-        stops = int(row["stops"])
-        price = int(row["price_rub"])
-        departure_hour = int(row["departure_time"][:2])
-        arrival_hour = int(row["arrival_time"][:2])
+        stops = safe_int(row.get("stops"))
+        price = safe_int(row.get("price_rub"))
+        departure_hour = safe_int(row.get("departure_time", "")[:2])
+        arrival_hour = safe_int(row.get("arrival_time", "")[:2])
         if prefer_direct and stops == 0:
             points += 80
         if need_baggage and row["baggage_included"] == "1":
             points += 60
-        if avoid_early and departure_hour < 6:
+        if avoid_early and departure_hour is not None and departure_hour < 6:
             points -= 60
-        if has_child and (arrival_hour >= 22 or arrival_hour < 6):
+        if has_child and arrival_hour is not None and (arrival_hour >= 23 or arrival_hour < 6):
             points -= 100
         if prefer_budget:
-            points -= price // 1000
+            points -= (price or 0) // 1000
         else:
-            points -= stops * 25
-            points -= price // 5000
-        return points, -price
+            points -= (stops or 0) * 25
+            points -= (price or 0) // 5000
+        return points, -(price or 0)
 
     return max(rows, key=score)["flight_id"]
 
@@ -211,20 +223,21 @@ def validate(case: dict[str, Any], draft: dict[str, Any]) -> list[str]:
     n = nights(group)
     total = 0
     if flight:
-        total += int(flight["price_rub"])
+        total += safe_int(flight.get("price_rub")) or 0
     if hotel and n:
-        total += int(hotel["price_per_night_rub"]) * n
+        total += (safe_int(hotel.get("price_per_night_rub")) or 0) * n
     if tour:
-        total += int(tour["total_price_rub"])
+        total += safe_int(tour.get("total_price_rub")) or 0
 
-    budget = int(group["budget_rub"]) if group.get("budget_rub") else None
+    budget = safe_int(group.get("budget_rub"))
     if budget and total and total > budget:
         violations.append(f"итог {total} ₽ превышает бюджет {budget} ₽")
 
     if flight and (group_has_child(group) or request_adds_child(case)):
         arrival = flight.get("arrival_time", "")
         hour = int(arrival[:2]) if re.match(r"^\d{2}:", arrival) else None
-        if hour is not None and (hour >= 22 or hour < 6):
+        # Ночной прилёт — после 23:00 (policy 02_baggage_and_fares.md §12) или раннее утро (<06:00).
+        if hour is not None and (hour >= 23 or hour < 6):
             violations.append(f"ночной прилёт {arrival} недопустим для группы с ребёнком")
 
     return violations

@@ -195,11 +195,10 @@ async def ensure_plan(db: AsyncSession, run: Run) -> Plan:
         plan = await db.get(Plan, run.active_plan_id)
         if plan:
             return plan
-    session = await db.get(ChatSession, run.session_id)
     plan = Plan(
         user_id=run.user_id,
         session_id=run.session_id,
-        group_id=session.group_id if session else None,
+        group_id=run.group_id,
         run_id=run.id,
         status="building",
     )
@@ -234,8 +233,7 @@ async def persist_draft(
         raise APIError(
             422, "validation_error", details={"source": "agent_plan", "reason": str(exc)}
         ) from exc
-    session = await db.get(ChatSession, run.session_id)
-    group = await get_group(db, session.group_id if session else None)
+    group = await get_group(db, run.group_id)
     validation = await validate_selection(db, group, draft.selections)
     if group and group.destination and draft.destination and draft.destination != group.destination:
         validation["valid"] = False
@@ -495,6 +493,7 @@ async def process_agent_event(
         await save_assistant_message(db, run, message("escalation", run_locale(run)))
     elif event_name == "error":
         run.status = "error"
+        run.finished_at = utcnow()
         candidate_code = data["error"]["code"]
         run.error_code = candidate_code if candidate_code in PUBLIC_ERROR_CODES else "internal"
         await append_event(
@@ -509,12 +508,27 @@ async def process_agent_event(
                 },
             },
         )
+        await append_event(db, run.id, "run_status", {"run_id": run.id, "status": "error"})
     elif event_name == "run_status":
         status = data["status"]
         run.status = status
         run.outcome = data.get("outcome")
         if status in TERMINAL_STATUSES:
             run.finished_at = utcnow()
+        if (
+            status == "completed"
+            and run.active_plan_id
+            and run.outcome != "recommendation"
+        ):
+            plan = await db.get(Plan, run.active_plan_id)
+            if plan and plan.status == "building":
+                plan.status = "ready"
+                await append_event(
+                    db,
+                    run.id,
+                    "plan_status",
+                    {"run_id": run.id, "plan_id": plan.id, "status": "ready"},
+                )
         await append_event(
             db,
             run.id,
@@ -569,7 +583,7 @@ async def build_agent_payload(
             "mode": run.mode,
             "locale": run.input_payload.get("locale", default_locale),
             **({"thread_id": session.thread_id} if session and session.thread_id else {}),
-            **({"group_id": session.group_id} if session and session.group_id else {}),
+            **({"group_id": run.group_id} if run.group_id else {}),
             **({"active_plan_id": run.active_plan_id} if run.active_plan_id else {}),
         }
         if run.mode in {"new_trip", "qa"}:
@@ -643,6 +657,10 @@ async def execute_run(run_id: str) -> None:
         payload, correlation_id = prepared
         created = await client.create_run(payload, correlation_id)
         if not await save_agent_mapping(run_id, created):
+            # The run reached a terminal state (e.g. cancelled) in the window
+            # between create_run and claiming the mapping, so the upstream agent
+            # run is orphaned. Cancel it proactively to avoid wasting resources.
+            await client.cancel(created.agent_run_id, correlation_id)
             return
         async for event in client.stream(created.stream_url, correlation_id):
             if not await process_persisted_agent_event(run_id, event.event, event.data):

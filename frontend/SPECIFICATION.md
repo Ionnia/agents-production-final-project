@@ -12,7 +12,7 @@ This document describes the current implemented state of the `frontend/` module.
 | Build tool | Vite 8 |
 | Styling | Tailwind v4 + scoped CSS per component |
 | State management | Pinia |
-| Routing | Vue Router 4 |
+| Routing | Vue Router 5 |
 | Map | MapLibre GL |
 | Mock backend | MSW 2 (browser service worker) |
 | API types | `openapi-typescript` — generated from `../api/openapi.yaml` |
@@ -91,7 +91,7 @@ All files under `src/api/`:
 | `schema.d.ts` | Generated from `../api/openapi.yaml` via `openapi-typescript`. Do not edit manually. |
 | `types.ts` | Friendly type aliases over `schema.d.ts`; discriminated `SseEvent` union on the event name field. |
 | `client.ts` | `createClient(opts)` — fetch wrapper; attaches Bearer token, parses JSON, maps non-OK responses to `ApiClientError` carrying status/code/details. Tested. |
-| `sse.ts` | `parseEventStream(body)` — async generator over a `ReadableStream<Uint8Array>`; `streamRun(args)` opens the ticket-authenticated SSE endpoint. Tested. |
+| `sse.ts` | `parseEventStream(body)` — async generator over a `ReadableStream<Uint8Array>` that accepts LF and CRLF SSE frame endings, including CRLF split across chunks and a final unterminated frame; `streamRun(args)` opens the ticket-authenticated SSE endpoint. Tested. |
 | `endpoints.ts` | One typed function per OpenAPI operation; exports `api` object and `setTokenGetter`. |
 
 ## 8. Pinia stores
@@ -106,7 +106,11 @@ All in `src/stores/`:
 | `plans.ts` | `current: Plan \| null`, `map`, `calendar`, `loading`, `pendingAdd` | `load(id)`, `accept(id)`, `reject(id)`, `modify(id)`, `stageAdd(city)`, `hasEdits()` |
 | `chat.ts` | `messages`, `sessionId`, `pendingQuestion`, `planStatus`, `planId`, `running` | `send(text)`, `answer(qId, optIds, freeform)`, `hydrate(id, msgs)`, `reset()`, `waitForIdle()` |
 
+`send`/`answer` resolve with the `ChatAccepted` (`run_id`, `session_id`) **as soon as the run is accepted** (set `sessionId` early) and stream the reply into the same store in the background; `waitForIdle()` resolves when that background run finishes. Each run is tracked by an `AbortController` and a run token: starting a new run, calling `reset()` (new-chat / session switch), or hydrating an existing session aborts the in-flight stream, clears `running`, and bumps the token so the stale loop stops mutating the store — no cross-talk into the next chat. Hydration also clears live-only `planStatus`/`planId`, and starting a new run clears stale pending-question and plan state before streaming begins. The stream loop **does not break on a terminal `run_status`** — it drains until the server closes the connection, so a `message` emitted after `run_status: completed` is not lost (no manual reload needed). A well-formed `error` SSE frame sets `planStatus` to `error` and surfaces a toast rather than closing silently, but a streamed assistant reply from the same run takes precedence over the generic live plan-error fallback so the live thread matches the persisted reload view. `hydrate()` shows a trailing clarifying-question message only as the question panel, never also as a plain bubble (no duplicate). When a new run starts (`send`/`answer`), any still-pending clarifying question is first demoted to a plain assistant bubble (its text) — mirroring `hydrate()`, which renders every non-trailing question as a bubble — so an answered or superseded question stays in the live thread instead of disappearing until a reload.
+
 All stores are tested (`*.spec.ts` co-located).
+`auth.restore()` clears in-memory access state when the persisted token cannot be restored (for
+example, `/auth/me` returns 401), matching logout cleanup semantics.
 
 ## 9. Mock backend (MSW)
 
@@ -122,8 +126,9 @@ All files under `src/mocks/`:
 
 ### Chat (`src/components/chat/`)
 
-- **`ChatView.vue`** — route-level component. Hero state (composer centred at 48%, `Куда отправимся?` heading) transitions to chatting state (composer at bottom, message thread visible) when the first message is sent. The centre→bottom slide is gated behind an `animate` flag set only on that first send, so a direct load (`/c/:id`) — which hydrates messages already "started" — renders the composer at the bottom immediately instead of sliding down over already-loaded bubbles. The hero block is likewise gated to the home route (`heroVisible = !started && !sessionId`), so it never flashes over the bubbles while a session route hydrates. The `sessionId` watcher skips re-hydration when the route param already matches the live store session, so live state (e.g. a pending clarifying question) survives the `router.replace` after the first message. After each completed run it calls `sessions.loadList()` so a newly started chat appears in the side-panel history without a reload. Responsive: `font-size: 28px` for the heading and `width: 94%` for the thread on ≤ 600 px.
-- **`ChatComposer.vue`** — textarea with auto-grow and send button; emits `submit(text)`.
+- **`ChatView.vue`** — route-level component. Hero state (composer centred at 48%, `Куда отправимся?` heading) transitions to chatting state (composer at bottom, message thread visible) when the first message is sent. The centre→bottom slide is gated behind an `animate` flag set only on that first send, so a direct load (`/c/:id`) — which hydrates messages already "started" — renders the composer at the bottom immediately instead of sliding down over already-loaded bubbles. The hero block is likewise gated to the home route (`heroVisible = !started && !sessionId`), so it never flashes over the bubbles while a session route hydrates. The `sessionId` watcher skips re-hydration when the route param already matches the live store session, so live state (e.g. a pending clarifying question) survives the `router.replace` after the first message. On the first message it calls `router.replace('/c/:id')` **immediately after the run is accepted** (not after the whole agent run), so the URL reflects the new chat right away while the reply streams in. After each completed run it calls `sessions.loadList()` so a newly started chat appears in the side-panel history without a reload. Responsive: `font-size: 28px` for the heading and `width: 94%` for the thread on ≤ 600 px.
+- When a clarifying question is pending, the main composer submits text through `chat.answer(question.id, [], text)` rather than starting a fresh chat turn, so freeform clarification replies keep the correct answer context.
+- **`ChatComposer.vue`** — textarea with auto-grow and send button; emits `submit(text)`. While `busy` (a run is in flight) the textarea is disabled and shows an "Агент отвечает…" placeholder, and the send button is disabled.
 - **`MessageList.vue`** — scrollable list; renders `MessageBubble` per message, an animated "thinking" indicator while `running` is set and no text is streaming yet (covers the live backend, which emits one final `message` with no `message_delta` chunks), `ClarifyingQuestion` when `question` prop is set, `PlanStatus` when `planStatus` is set. Assistant bubbles carry no drop shadow.
 - **`MessageBubble.vue`** — user/assistant bubble with optional `plan_ref` link to the plan view and a small `HH:MM` (ru-RU) timestamp from the message's `created_at`. Assistant bubbles carry no drop shadow.
 - **`ClarifyingQuestion.vue`** — renders option chips + optional freeform input; emits `answer(optionIds, freeform)`.
@@ -136,21 +141,21 @@ Login/register form (tab-switched). On success navigates to the `redirect` query
 ### Side panel lists
 
 - **`SessionList.vue`** — renders session history with each chat's creation time (Russian locale: time only when created today, otherwise short date + time, e.g. `27 янв. 14:37`); filter by `filter` prop; navigates to `/c/:id`.
-- **`GroupList.vue`** — renders groups (most recent first) inside a `CollapsibleSection`; navigates to group detail (currently shows info in side panel).
-- **`PlanList.vue`** — renders plans from the active session (most recent first) inside a `CollapsibleSection`; navigates to `/plans/:id`.
+- **`GroupList.vue`** — renders groups (most recent first) inside a `CollapsibleSection`; filters by the `filter` prop. Group rows are currently display-only (name + member count) and not navigable — there is no group-detail route.
+- **`PlanList.vue`** — renders plans across the user's groups (most recent first) inside a `CollapsibleSection`; filters by destination via the `filter` prop; navigates to `/plans/:id`.
 - **`CollapsibleSection.vue`** — accordion wrapper: a clickable header (chevron + title) toggles a scrollable body capped at ~3 visible rows.
 
 ### Plan view (`src/components/plan/`)
 
 - **`PlanView.vue`** — fixed full-screen layout: sticky header (back button + destination + status), two-column grid (map/itinerary pane left, details right; stacks on ≤ 860 px). Loads plan + map + calendar on mount.
 - **`MapView.vue`** — MapLibre GL canvas rendering `MapPoint[]` as accent-coloured pin markers with popups, plus a dashed accent route line. Basemap is CARTO's free (no-API-key) **vector** dark style; on load every symbol layer's `text-field` is rewritten to `coalesce(name:ru, name)` so map labels display in Russian. Plan status text is localised via `utils/planStatus.ts` (`planStatusLabel`), shared with the side-panel `PlanList`.
-- **`ItineraryView.vue`** — day-grouped list of `CalendarEvent[]` with time, title, description, location, and price.
+- **`ItineraryView.vue`** — day-grouped list of `CalendarEvent[]` with time, title, location, and notes (description). `CalendarEvent` carries no price field, so none is shown.
 - **`OfferCard.vue`** — renders a `FlightSel`, `HotelSel`, or `TourSel` in a glass card.
 - **`PlanEditBar.vue`** — input to stage `AddPoint` cities + "Rebuild route" button; calls `plans.modify()` and emits `rebuild(runId)`.
 
 ## 11. Test coverage
 
-17 spec files co-located with sources. Run with `pnpm test` (Vitest, jsdom environment):
+18 spec files co-located with sources (22 tests). Run with `pnpm test` (Vitest, jsdom environment):
 
 - `api/client.spec.ts` — HTTP client (bearer token, error envelope)
 - `api/sse.spec.ts` — SSE stream parser
@@ -160,6 +165,7 @@ Login/register form (tab-switched). On success navigates to the `redirect` query
 - `mocks/sse-script.spec.ts` — scripted SSE frames
 - `mocks/handlers.spec.ts` — MSW handler integration (login + me + sessions)
 - `stores/auth.spec.ts`, `sessions.spec.ts`, `groups.spec.ts`, `plans.spec.ts`, `chat.spec.ts` — Pinia store unit tests
+- `components/chat/ChatView.spec.ts` — chat-flow regression tests (reply visible without reload, message-after-`run_status` not dropped, no duplicated clarifying question on hydrate, input disabled while running)
 
 ## 12. File structure (current)
 

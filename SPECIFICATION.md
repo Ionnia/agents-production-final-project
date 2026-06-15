@@ -88,7 +88,7 @@ the backend persists. See [`agent-service/SPECIFICATION.md`](./agent-service/SPE
 
 ### 2.3 Frontend (`frontend/`)
 
-Vue 3 + TypeScript + Vite + Tailwind v4 + Pinia + Vue Router 4 + MapLibre GL. The full application
+Vue 3 + TypeScript + Vite + Tailwind v4 + Pinia + Vue Router 5 + MapLibre GL. The full application
 is implemented and mock-backed via MSW 2: glassmorphism UI with dithered prerendered backgrounds (8
 scenes, cursor color-lens), auth flow, chat with streamed SSE responses and clarifying questions, a
 side panel with session/group/plan history, and a plan view with an interactive MapLibre map,
@@ -156,7 +156,10 @@ and validates recommendation drafts through backend Contract B before streaming 
 ## 4. Running locally
 
 - **Docker (recommended):** `cp .env.example .env` (fill in `GIGACHAT_CREDENTIALS` + the three
-  secrets), then `docker compose up --build` and open `http://localhost:5173`. The root
+  secrets), then `docker compose up --build` and open `http://localhost:5173`. For a clean local
+  rebuild, the root `rebuild-compose.sh` helper anchors itself to this repository's
+  `docker-compose.yml` and runs `docker compose down`, `docker compose build --no-cache`, and
+  `docker compose up` in sequence. The root
   [`docker-compose.yml`](./docker-compose.yml) runs three containers — `frontend` (nginx serving the
   built SPA and reverse-proxying `/api` → backend, so it is same-origin/no-CORS), `backend` (:8000),
   and `agent-service` (internal). The backend migrates+seeds on startup; the agent builds the RAG

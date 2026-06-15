@@ -8,7 +8,7 @@ export async function* parseEventStream(body: ReadableStream<Uint8Array>): Async
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-    buf += dec.decode(value, { stream: true })
+    buf = normalizeLineEndings(buf + dec.decode(value, { stream: true }))
     let idx: number
     while ((idx = buf.indexOf('\n\n')) !== -1) {
       const frame = buf.slice(0, idx)
@@ -17,6 +17,18 @@ export async function* parseEventStream(body: ReadableStream<Uint8Array>): Async
       if (ev) yield ev
     }
   }
+  buf = normalizeLineEndings(buf + dec.decode(), true)
+  const trailing = buf.trim()
+  if (trailing) {
+    const ev = parseFrame(trailing)
+    if (ev) yield ev
+  }
+}
+
+function normalizeLineEndings(input: string, final = false): string {
+  const keepTrailingCr = !final && input.endsWith('\r')
+  const body = keepTrailingCr ? input.slice(0, -1) : input
+  return body.replace(/\r\n/g, '\n').replace(/\r/g, '\n') + (keepTrailingCr ? '\r' : '')
 }
 
 function parseFrame(frame: string): SseEvent | null {

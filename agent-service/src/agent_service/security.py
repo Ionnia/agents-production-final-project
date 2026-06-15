@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import secrets
+
 from fastapi import Header, HTTPException
 
 from .config import get_settings
@@ -15,9 +17,11 @@ def _unauthorized() -> HTTPException:
 async def require_service_token(authorization: str | None = Header(default=None)) -> None:
     """Contract A auth: Authorization: Bearer <AGENT_SERVICE_TOKEN>."""
     expected = get_settings().agent_service_token
-    if not authorization or not authorization.startswith("Bearer "):
+    if not expected or not authorization or not authorization.startswith("Bearer "):
         raise _unauthorized()
-    if authorization.removeprefix("Bearer ").strip() != expected:
+    presented = authorization.removeprefix("Bearer ").strip()
+    # Constant-time comparison: avoids leaking the token via response-timing side channels.
+    if not secrets.compare_digest(presented, expected):
         raise _unauthorized()
 
 

@@ -20,11 +20,16 @@ class Planner:
         self._settings = settings
         self._b = contract_b
         self._final_runtime: _FinalAgentRuntime | None = None
+        self._runtime_lock = asyncio.Lock()
         self.active_planner = "final_agent"
 
     async def plan(self, run: CreateRunRequest) -> PlannerResult:
         if self._final_runtime is None:
-            self._final_runtime = _FinalAgentRuntime(self._settings)
+            # Serialize the heavyweight, side-effectful runtime construction so concurrent runs
+            # cannot both build it (sys.path / os.environ / module globals are process-shared).
+            async with self._runtime_lock:
+                if self._final_runtime is None:
+                    self._final_runtime = _FinalAgentRuntime(self._settings)
         user_text = self._user_text(run)
         if not user_text:
             return PlannerResult(
@@ -65,8 +70,25 @@ class Planner:
             decision_rationale=str(draft.get("answer") or ""),
         )
 
-        if result.outcome_type == "recommendation" and run.group_id:
-            validation = await self._validate_ids(run, result.flight_id, result.hotel_id, result.tour_id)
+        if result.outcome_type == "recommendation":
+            # A recommendation may only be emitted once the backend has validated the draft
+            # (SPECIFICATION.md §3). Validation requires a group_id (Contract B
+            # POST /internal/plans/validate body), and on any failure/unavailability we must
+            # NOT fail open — we downgrade to clarification instead of recommending unvalidated.
+            if run.group_id:
+                validation = await self._validate_ids(
+                    run, result.flight_id, result.hotel_id, result.tour_id
+                )
+            else:
+                validation = {
+                    "valid": False,
+                    "hard_violations": [
+                        {
+                            "code": "validation_unavailable",
+                            "message": "невозможно проверить план без group_id",
+                        }
+                    ],
+                }
             if not bool(validation.get("valid", True)):
                 reasons = [
                     item.get("message", item.get("code", "нарушение ограничения"))
@@ -120,13 +142,25 @@ class Planner:
                 run.correlation_id,
             )
         except ContractBError:
-            return {"valid": True, "hard_violations": []}
+            # Do NOT fail open: an unreachable/erroring validation backend must downgrade the
+            # recommendation to clarification, never emit an unvalidated plan (SPECIFICATION.md §3).
+            return {
+                "valid": False,
+                "hard_violations": [
+                    {
+                        "code": "validation_unavailable",
+                        "message": "сервис проверки плана недоступен",
+                    }
+                ],
+            }
 
     def _user_text(self, run: CreateRunRequest) -> str:
         if run.mode in {"new_trip", "qa"} and run.message:
             return run.message
         if run.mode == "answer" and run.answer:
-            return run.answer.freeform or " ".join(run.answer.selected_option_ids or [])
+            return run.answer.freeform or " ".join(
+                run.answer.selected_option_labels or run.answer.selected_option_ids or []
+            )
         if run.mode == "modify" and run.route_edits:
             return run.route_edits.get("note") or "пересобери маршрут"
         return ""

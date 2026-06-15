@@ -27,7 +27,15 @@ from mas_supervisor_baseline import (
     policy_node,
 )
 from llm_tool_rag_baseline import load_qa
-from langgraph_plan_validate_baseline import dump_draft, lookup, get_group, nights, group_has_child
+from langgraph_plan_validate_baseline import (
+    dump_draft,
+    lookup,
+    get_group,
+    nights,
+    group_has_child,
+    request_adds_child,
+    safe_int,
+)
 
 
 MAX_ROUNDS = 2
@@ -50,12 +58,23 @@ class CaseState(TypedDict):
 
 
 def picks_from_specialists(state: CaseState) -> dict[str, Any]:
+    """Те же id, что попадут в итоговые entities (см. carry_entities в B3): сначала
+    recommended_*, затем acceptable_ids[0]. Иначе факты выполнимости считались бы для
+    другого (или отсутствующего) плана, чем фактически эмитится в entities."""
     flight = state.get("flight_analysis") or {}
     hotel = state.get("hotel_analysis") or {}
     tour = state.get("tour_analysis") or {}
+
+    def first_acceptable(analysis: dict[str, Any]) -> Any:
+        ids = analysis.get("acceptable_ids")
+        return ids[0] if isinstance(ids, list) and ids else None
+
     return {
-        "flight_id": flight.get("recommended_flight_id"),
-        "hotel_id": hotel.get("recommended_hotel_id") or tour.get("linked_hotel_id"),
+        "flight_id": flight.get("recommended_flight_id") or first_acceptable(flight),
+        "hotel_id": (
+            hotel.get("recommended_hotel_id")
+            or tour.get("linked_hotel_id") or first_acceptable(hotel)
+        ),
         "tour_id": tour.get("recommended_tour_id"),
     }
 
@@ -82,29 +101,30 @@ def compute_feasibility(state: CaseState) -> dict[str, Any]:
     # Стоимость без двойного счёта: пакетный тур уже включает перелёт/отель.
     total = 0
     if tour:
-        total += int(tour["total_price_rub"])
+        total += safe_int(tour.get("total_price_rub")) or 0
         if flight and tour.get("includes_flight") != "1":
-            total += int(flight["price_rub"])
+            total += safe_int(flight.get("price_rub")) or 0
         if hotel and tour.get("hotel_id") != hotel.get("hotel_id"):
-            total += int(hotel["price_per_night_rub"]) * (n or 1)
+            total += (safe_int(hotel.get("price_per_night_rub")) or 0) * (n or 1)
     else:
         if flight:
-            total += int(flight["price_rub"])
+            total += safe_int(flight.get("price_rub")) or 0
         if hotel and n:
-            total += int(hotel["price_per_night_rub"]) * n
+            total += (safe_int(hotel.get("price_per_night_rub")) or 0) * n
 
     eff = intent.get("effective_budget_rub")
     try:
         eff = int(eff) if eff not in (None, "") else None
     except (TypeError, ValueError):
         eff = None
-    budget = eff if eff else (int(group["budget_rub"]) if group and group.get("budget_rub") else None)
+    budget = eff if eff else (safe_int(group.get("budget_rub")) if group else None)
     within_budget = (total <= budget) if (budget and total) else None
 
-    if flight and group and group_has_child(group):
+    if flight and group and (group_has_child(group) or request_adds_child(case)):
         arrival = flight.get("arrival_time", "")
         hour = int(arrival[:2]) if re.match(r"^\d{2}:", arrival) else None
-        if hour is not None and hour >= 23:  # README: ночной прилёт — после 23:00
+        # Ночной прилёт — после 23:00 (policy 02_baggage_and_fares.md §12) или раннее утро (<06:00).
+        if hour is not None and (hour >= 23 or hour < 6):
             violations.append(f"ночной прилёт {arrival} для группы с ребёнком")
 
     # Атрибуты выбранного плана как ФАКТЫ — агент сам сверит их с жёсткими требованиями из запроса
@@ -112,16 +132,16 @@ def compute_feasibility(state: CaseState) -> dict[str, Any]:
     chosen: dict[str, Any] = {}
     if flight:
         chosen["flight"] = {
-            "stops": int(flight["stops"]),
-            "direct": flight["stops"] == "0",
-            "baggage_included": flight["baggage_included"] == "1",
+            "stops": safe_int(flight.get("stops")),
+            "direct": flight.get("stops") == "0",
+            "baggage_included": flight.get("baggage_included") == "1",
             "arrival_time": flight.get("arrival_time"),
         }
     if hotel:
         chosen["hotel"] = {
-            "stars": int(hotel["stars"]),
-            "breakfast_included": hotel["breakfast_included"] == "1",
-            "free_cancellation": hotel["free_cancellation"] == "1",
+            "stars": safe_int(hotel.get("stars")),
+            "breakfast_included": hotel.get("breakfast_included") == "1",
+            "free_cancellation": hotel.get("free_cancellation") == "1",
             "rating": hotel.get("rating"),
         }
     if tour:

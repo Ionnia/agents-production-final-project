@@ -521,9 +521,13 @@ export interface components {
         RunStatus: "started" | "running" | "completed" | "cancelled" | "error";
         /** @enum {string} */
         PlanBuildStatus: "building" | "ready" | "error";
+        /**
+         * @description Ordered route point. Rich place-card fields are optional Agent Service content validated
+         *     and persisted by the backend. All strings are plain text, never trusted HTML.
+         */
         MapPoint: {
             id: string;
-            /** @description Settlement / point label */
+            /** @description Place / route point label */
             name: string;
             /** @enum {string} */
             kind: "origin" | "destination" | "stop";
@@ -534,6 +538,45 @@ export interface components {
             /** @description Position along the route (0-based) */
             order: number;
             note?: string;
+            /**
+             * @deprecated
+             * @description Legacy alias of `summary`; both carry the same value when present.
+             */
+            description?: string;
+            summary?: string;
+            /** Format: date */
+            visit_date?: string;
+            /** @description Local visit time in HH:MM form. */
+            visit_time?: string;
+            /** Format: date-time */
+            visit_start?: string;
+            /** Format: date-time */
+            visit_end?: string;
+            duration_minutes?: number;
+            cost_rub?: number;
+            price_note?: string;
+            /** @description Backend-owned id of the linked calendar event. */
+            calendar_event_id?: string;
+            /** @description Related public business reference, when applicable. */
+            ref_id?: string;
+            transport_to_next?: string;
+            travel_time_to_next_minutes?: number;
+            /** Format: double */
+            distance_to_next_km?: number;
+            historical_background?: string;
+            interesting_facts?: string[];
+            visit_tips?: string[];
+            food_recommendations?: string[];
+            signature_dishes?: string[];
+            average_check_rub?: number;
+            booking_advice?: string;
+            accessibility_notes?: string;
+            safety_notes?: string;
+            weather_notes?: string;
+            why_recommended?: string;
+            content_source?: string;
+            /** @enum {string} */
+            content_confidence?: "low" | "medium" | "high";
         };
         QuestionOption: {
             id: string;
@@ -594,6 +637,8 @@ export interface components {
         Answer: {
             in_reply_to_question_id: string;
             selected_option_ids?: string[];
+            /** @description Labels resolved by the backend for persisted answer history. */
+            readonly selected_option_labels?: string[];
             freeform?: string;
         };
         PlanRef: {

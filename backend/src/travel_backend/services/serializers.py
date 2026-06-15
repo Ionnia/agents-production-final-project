@@ -191,7 +191,7 @@ async def plan_dict(db: AsyncSession, item: Plan) -> dict[str, Any]:
         )
     ).all()
     nights = (
-        (item.end_date - item.start_date).days
+        max((item.end_date - item.start_date).days, 1)
         if item.start_date is not None and item.end_date is not None
         else 1
     )

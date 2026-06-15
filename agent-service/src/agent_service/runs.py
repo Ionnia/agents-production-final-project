@@ -66,6 +66,9 @@ class RunManager:
         self._planner = Planner(settings, self._contract_b)
         self.runs: dict[str, Run] = {}
         self.threads: dict[str, ThreadState] = {}
+        # Strong references to in-flight executor tasks; the event loop only keeps a weak ref,
+        # so without this the task could be GC'd mid-run and silently abort the stream.
+        self._tasks: set[asyncio.Task[None]] = set()
 
     @property
     def planner_name(self) -> str:
@@ -83,7 +86,9 @@ class RunManager:
             session_id=req.session_id,
         )
         self.runs[run.agent_run_id] = run
-        asyncio.create_task(self._execute(run, req, thread))
+        task = asyncio.create_task(self._execute(run, req, thread))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
         return run
 
     async def _emit(self, run: Run, event: str, data: dict[str, Any]) -> None:

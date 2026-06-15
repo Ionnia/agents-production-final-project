@@ -38,10 +38,12 @@ function render() {
   // scope, so we keep one minimal cast for the route feature, derived from maplibre's own
   // setData signature rather than `any`. getSource is still strongly typed.
   const line = { type: 'Feature', geometry: { type: 'LineString', coordinates: pts.map(p => [p.lng, p.lat]) }, properties: {} } as Parameters<maplibregl.GeoJSONSource['setData']>[0]
+  // Read the accent on every render so the route line tracks the active scene accent
+  // (the update path used to keep the color captured at first paint).
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#d97757'
   const src = map.getSource('route') as maplibregl.GeoJSONSource | undefined
-  if (src) src.setData(line)
+  if (src) { src.setData(line); map.setPaintProperty('route', 'line-color', accent) }
   else {
-    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#d97757'
     map.addSource('route', { type: 'geojson', data: line }); map.addLayer({ id: 'route', type: 'line', source: 'route', paint: { 'line-color': accent, 'line-width': 3, 'line-dasharray': [2, 1.5] } })
   }
   const b = new maplibregl.LngLatBounds(); pts.forEach(p => b.extend([p.lng, p.lat]))

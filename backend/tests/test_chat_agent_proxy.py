@@ -11,7 +11,11 @@ from travel_backend.database import SessionFactory, engine
 from travel_backend.errors import APIError
 from travel_backend.models import ChatSession, Message, Plan, Run, RunEvent, User
 from travel_backend.schemas import AgentEvent
-from travel_backend.services.runs import process_persisted_agent_event
+from travel_backend.services.runs import (
+    build_agent_payload,
+    execute_run,
+    process_persisted_agent_event,
+)
 
 
 class SuccessfulAgentClient:
@@ -118,6 +122,57 @@ class InvalidPlanAgentClient(SuccessfulAgentClient):
         )
 
 
+class ErrorThenStatusAgentClient(SuccessfulAgentClient):
+    async def stream(
+        self,
+        stream_url: str,
+        correlation_id: str,
+        last_event_id: str | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        assert self.agent_run_id
+        yield AgentEvent(
+            event="error",
+            data={
+                "agent_run_id": self.agent_run_id,
+                "error": {"code": "agent_failed", "message": "private upstream error"},
+            },
+        )
+        yield AgentEvent(
+            event="run_status",
+            data={"agent_run_id": self.agent_run_id, "status": "error"},
+        )
+
+
+class ClarifyingModifyAgentClient(SuccessfulAgentClient):
+    async def stream(
+        self,
+        stream_url: str,
+        correlation_id: str,
+        last_event_id: str | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        assert self.agent_run_id
+        yield AgentEvent(
+            event="clarifying_question",
+            data={
+                "agent_run_id": self.agent_run_id,
+                "question": {
+                    "id": "q-modify",
+                    "text": "Что именно изменить в маршруте?",
+                    "options": [],
+                    "allow_freeform": True,
+                },
+            },
+        )
+        yield AgentEvent(
+            event="run_status",
+            data={
+                "agent_run_id": self.agent_run_id,
+                "status": "completed",
+                "outcome": "clarification",
+            },
+        )
+
+
 class TimeoutAgentClient(SuccessfulAgentClient):
     async def create_run(self, payload: dict, correlation_id: str) -> CreatedRun:
         raise APIError(504, "timeout")
@@ -195,6 +250,28 @@ class PausingCancelAgentClient(CancelAgentClient):
         assert self.release is not None
         self.started.set()
         await self.release.wait()
+
+
+class RaceCancelAgentClient(SuccessfulAgentClient):
+    """Simulates a cancel landing in the window between create_run and mapping.
+
+    create_run succeeds upstream, then the local run is flipped to a terminal
+    state (as a concurrent cancel would do) before save_agent_mapping claims it.
+    """
+
+    cancelled: tuple[str, str] | None = None
+    race_run_id: str | None = None
+
+    async def create_run(self, payload: dict, correlation_id: str) -> CreatedRun:
+        created = await super().create_run(payload, correlation_id)
+        async with SessionFactory() as db:
+            run = await db.get(Run, type(self).race_run_id)
+            run.status = "cancelled"
+            await db.commit()
+        return created
+
+    async def cancel(self, agent_run_id: str, correlation_id: str) -> None:
+        type(self).cancelled = (agent_run_id, correlation_id)
 
 
 class SessionBoundaryAgentClient(SuccessfulAgentClient):
@@ -342,6 +419,33 @@ async def test_invalid_agent_plan_is_not_persisted(client, unique_email, monkeyp
         assert count == 0
 
 
+async def test_agent_error_event_persists_terminal_run_status(client, unique_email, monkeypatch):
+    monkeypatch.setattr(
+        "travel_backend.services.runs.AgentServiceClient",
+        ErrorThenStatusAgentClient,
+    )
+    _, headers = await register_user(client, unique_email)
+    response = await client.post(
+        "/api/v1/chat",
+        headers=headers,
+        json={"message": "Сломай агент"},
+    )
+    assert response.status_code == 202
+    run_id = response.json()["run_id"]
+
+    async with SessionFactory() as db:
+        run = await db.get(Run, run_id)
+        events = (
+            await db.scalars(
+                select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.sequence)
+            )
+        ).all()
+    assert run.status == "error"
+    assert run.finished_at is not None
+    assert [event.event_name for event in events][-2:] == ["error", "run_status"]
+    assert events[-1].payload == {"run_id": run_id, "status": "error"}
+
+
 async def test_streamed_assistant_message_uses_one_backend_owned_id(
     client,
     unique_email,
@@ -445,6 +549,43 @@ async def test_modify_starts_agent_run_with_route_edits_and_active_plan(
     assert SuccessfulAgentClient.create_payload["active_plan_id"] == plan_id
 
 
+async def test_modify_clarification_restores_existing_plan_ready_status(
+    client,
+    unique_email,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "travel_backend.services.runs.AgentServiceClient",
+        ClarifyingModifyAgentClient,
+    )
+    _, headers = await register_user(client, unique_email)
+    plan_id = await create_ready_plan(unique_email)
+    response = await client.post(
+        f"/api/v1/plans/{plan_id}/modify",
+        headers=headers,
+        json={"note": "Пока не знаю, что изменить"},
+    )
+    assert response.status_code == 202, response.text
+    run_id = response.json()["run_id"]
+
+    async with SessionFactory() as db:
+        plan = await db.get(Plan, plan_id)
+        run = await db.get(Run, run_id)
+        events = (
+            await db.scalars(
+                select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.sequence)
+            )
+        ).all()
+    assert run.status == "completed"
+    assert run.outcome == "clarification"
+    assert plan.status == "ready"
+    assert [event.payload for event in events if event.event_name == "plan_status"][-1] == {
+        "run_id": run_id,
+        "plan_id": plan_id,
+        "status": "ready",
+    }
+
+
 async def test_agent_timeout_marks_run_failed_and_emits_safe_russian_error(
     client,
     unique_email,
@@ -545,7 +686,7 @@ async def test_cancel_calls_agent_service_when_mapping_exists(
     )
 
 
-async def test_cancel_orders_concurrent_agent_events_before_terminal_status(
+async def test_cancel_rejects_concurrent_agent_events_after_local_terminal_status(
     client,
     unique_email,
     monkeypatch,
@@ -590,7 +731,7 @@ async def test_cancel_orders_concurrent_agent_events_before_terminal_status(
             },
         },
     )
-    assert processed is True
+    assert processed is False
     PausingCancelAgentClient.release.set()
     response = await cancel_task
     assert response.status_code == 202
@@ -619,7 +760,9 @@ async def test_cancel_orders_concurrent_agent_events_before_terminal_status(
     assert events[-1].event_name == "run_status"
     assert events[-1].payload["status"] == "cancelled"
     assert all(
-        event.payload.get("message", {}).get("content") != "After cancellation" for event in events
+        event.payload.get("message", {}).get("content")
+        not in {"Before cancellation", "After cancellation"}
+        for event in events
     )
 
 
@@ -690,3 +833,138 @@ async def test_agent_network_waits_do_not_hold_database_connections(
     async with SessionFactory() as db:
         run = await db.get(Run, response.json()["run_id"])
         assert run.status == "completed"
+
+
+async def test_run_cancelled_before_mapping_cancels_orphaned_agent_run(
+    client,
+    unique_email,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "travel_backend.services.runs.AgentServiceClient",
+        RaceCancelAgentClient,
+    )
+    RaceCancelAgentClient.cancelled = None
+    _, headers = await register_user(client, unique_email)
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        session = ChatSession(user_id=user.id, summary="Orphan cancellation")
+        db.add(session)
+        await db.flush()
+        run = Run(
+            session_id=session.id,
+            user_id=user.id,
+            correlation_id=str(uuid4()),
+            mode="new_trip",
+            input_payload={"message": "Подбери поездку"},
+            status="started",
+        )
+        db.add(run)
+        await db.commit()
+        run_id = run.id
+    RaceCancelAgentClient.race_run_id = run_id
+
+    await execute_run(run_id)
+
+    # The upstream agent run that create_run produced must be proactively cancelled
+    # rather than left orphaned.
+    assert RaceCancelAgentClient.cancelled is not None
+    assert RaceCancelAgentClient.cancelled[0] == f"agent-{run_id}"
+    async with SessionFactory() as db:
+        run = await db.get(Run, run_id)
+        # The terminal status must be preserved and no mapping stored.
+        assert run.status == "cancelled"
+        assert run.agent_run_id is None
+
+
+async def test_agent_payload_uses_per_run_group_snapshot(client, unique_email):
+    # A session re-pointed to a different group must not leak its current group
+    # into an older run: build_agent_payload must use the run's own snapshot.
+    await register_user(client, unique_email)
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        session = ChatSession(
+            user_id=user.id,
+            group_id="G-current",
+            summary="Re-pointed session",
+        )
+        db.add(session)
+        await db.flush()
+        run = Run(
+            session_id=session.id,
+            user_id=user.id,
+            group_id="G-historical",
+            correlation_id=str(uuid4()),
+            mode="new_trip",
+            input_payload={"message": "Подбери поездку", "locale": "ru"},
+            status="started",
+        )
+        db.add(run)
+        await db.commit()
+        run_id = run.id
+
+    prepared = await build_agent_payload(run_id, "ru")
+    assert prepared is not None
+    payload, _ = prepared
+    assert payload["group_id"] == "G-historical"
+
+
+async def test_selected_clarification_options_are_forwarded_to_agent_as_labels(
+    client,
+    unique_email,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "travel_backend.services.runs.AgentServiceClient",
+        SuccessfulAgentClient,
+    )
+    _, headers = await register_user(client, unique_email)
+    async with SessionFactory() as db:
+        user = await db.scalar(select(User).where(User.email == unique_email))
+        session = ChatSession(user_id=user.id, summary="Clarification")
+        db.add(session)
+        await db.flush()
+        db.add(
+            Message(
+                session_id=session.id,
+                role="assistant",
+                content="Какое условие можно смягчить?",
+                question={
+                    "id": "q-budget",
+                    "text": "Какое условие можно смягчить?",
+                    "options": [
+                        {"id": "o0", "label": "Увеличить бюджет"},
+                        {"id": "o1", "label": "Изменить даты"},
+                    ],
+                    "allow_freeform": True,
+                },
+            )
+        )
+        await db.commit()
+        session_id = session.id
+
+    response = await client.post(
+        "/api/v1/chat",
+        headers=headers,
+        json={
+            "session_id": session_id,
+            "in_reply_to_question_id": "q-budget",
+            "selected_option_ids": ["o0"],
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    assert SuccessfulAgentClient.create_payload["answer"] == {
+        "in_reply_to_question_id": "q-budget",
+        "selected_option_ids": ["o0"],
+        "selected_option_labels": ["Увеличить бюджет"],
+    }
+    async with SessionFactory() as db:
+        message = await db.scalar(
+            select(Message).where(
+                Message.session_id == session_id,
+                Message.role == "user",
+                Message.answer.is_not(None),
+            )
+        )
+    assert message.content == "Увеличить бюджет"

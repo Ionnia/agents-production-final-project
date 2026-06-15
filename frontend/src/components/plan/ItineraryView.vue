@@ -21,7 +21,7 @@ const fmtTime = (s?: string) => (s ? new Date(s).toLocaleTimeString('ru-RU', { h
       <div class="dh">{{ fmtDay(day) }}</div>
       <div v-for="e in evs" :key="e.id" class="ev glass">
         <span class="ic">{{ ICON[e.type] }}</span>
-        <div class="body"><div class="ti">{{ e.title }}</div><div class="meta">{{ fmtTime(e.start) }}<template v-if="e.end"> – {{ fmtTime(e.end) }}</template><template v-if="e.location"> · {{ e.location }}</template></div></div>
+        <div class="body"><div class="ti">{{ e.title }}</div><div class="meta">{{ fmtTime(e.start) }}<template v-if="e.end"> – {{ fmtTime(e.end) }}</template><template v-if="e.location"> · {{ e.location }}</template></div><div v-if="e.notes" class="notes">{{ e.notes }}</div></div>
       </div>
     </div>
   </div>
@@ -34,4 +34,5 @@ const fmtTime = (s?: string) => (s ? new Date(s).toLocaleTimeString('ru-RU', { h
 .ic { font-size: 18px; }
 .ti { font-weight: 600; color: var(--ink); }
 .meta { font-size: 12.5px; color: var(--ink-soft); }
+.notes { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; }
 </style>

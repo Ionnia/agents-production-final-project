@@ -22,7 +22,8 @@ function fire() { if (props.busy) return; const t = model.value.trim(); if (t) {
 <template>
   <div class="composer glass">
     <div class="row">
-      <textarea ref="ta" v-model="model" class="field" rows="1" placeholder="Спланируй путешествие…"
+      <textarea ref="ta" v-model="model" class="field" rows="1"
+        :placeholder="busy ? 'Агент отвечает…' : 'Спланируй путешествие…'" :disabled="busy"
         autocomplete="off" spellcheck="false" @keydown="onKey" />
       <button class="send" :disabled="!model.trim() || busy" aria-label="Отправить" @click="fire">↑</button>
     </div>
@@ -34,6 +35,7 @@ function fire() { if (props.busy) return; const t = model.value.trim(); if (t) {
 .row { display: flex; align-items: flex-end; gap: 10px; padding: 9px 12px; }
 .field { flex: 1; resize: none; border: none; background: transparent; color: var(--ink); font: inherit; font-size: 16px; outline: none; padding: 8px; max-height: 160px; }
 .field::placeholder { color: var(--ink-soft); }
+.field:disabled { opacity: .55; cursor: not-allowed; }
 .send { width: 40px; height: 40px; flex: none; border-radius: 50%; border: none; cursor: pointer; color: #fff; font-size: 18px;
   background: linear-gradient(160deg, var(--accent), var(--accent-press)); transition: var(--tap); }
 @media (hover: hover) { .send:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); box-shadow: var(--accent-glow); } }

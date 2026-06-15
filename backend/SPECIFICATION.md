@@ -28,6 +28,9 @@ runtime implementation lives in the installable `travel_backend` package.
   private `agent_message_id` column for correlation and never become database primary keys or
   frontend message IDs. Streamed deltas and the corresponding final message share the same
   backend-owned message ID.
+- Clarifying-question answers store stable selected option IDs and, when the referenced persisted
+  question is available, backend-resolved selected option labels. The labels are used for user-visible
+  answer content and forwarded to the Agent Service so opaque IDs are not interpreted as language.
 - Russian user-facing messages by default, with a basic `en-US` fallback.
 
 ## Persistence and seed data
@@ -55,7 +58,12 @@ Run event numbers are allocated through an atomic per-run database counter rathe
 
 Agent `ready` events are not forwarded directly. The backend loads referenced offers, recalculates
 cost, applies hard constraints, writes the plan/map/calendar atomically, and only then emits
-frontend `plan_status=ready`.
+frontend `plan_status=ready`. Group context for agent reasoning, draft validation, and new-plan
+ownership is taken from the per-run group snapshot (`Run.group_id`) captured when the run was
+created, not from the session's current group, so re-pointing a session at a different group does
+not retroactively re-target an older run. Stay-length pricing floors the trip to at least one night
+for same-day groups, and the serialized hotel `nights` applies the same floor so the displayed
+nights and recalculated total stay consistent.
 
 Map points keep normalized route coordinates and ordering in columns, with validated optional
 place-card attributes stored as JSON. Public map fields are flat and backward-compatible.
@@ -66,6 +74,11 @@ Every Agent Service event is checked for a supported semantic name, required fie
 `agent_run_id`. `observability` is dropped. Conflict, escalation, plan-error, and run-error text is
 localized by the backend rather than forwarding arbitrary agent text. The emitted frontend event
 vocabulary is limited to the seven event types frozen in `api/openapi.yaml`.
+An Agent `error` SSE event immediately persists a terminal backend run state, emits both `error` and
+terminal `run_status:error`, and ignores any later events for that run. If a modify/rebuild run asks a
+clarifying question or otherwise completes without a replacement recommendation, the previously active
+plan is restored to `ready` and a `plan_status:ready` event is emitted so the UI is not left in a
+permanent rebuilding state.
 
 Agent route content rejects unknown fields, invalid types, invalid confidence values, duplicate
 orders/references, unsafe datetime forms, and oversized text/list/aggregate payloads. Content is
@@ -79,8 +92,11 @@ a `route_preview` event.
 Agent HTTP calls and SSE reads execute without an open SQLAlchemy session. Run payload loading,
 agent mapping, each semantic event, terminal-state handling, and failure handling use separate
 short-lived transactions while preserving sequential event ordering. Agent cancellation also
-releases its request database session before the upstream HTTP call and conditionally commits the
-terminal state afterward, preventing later Agent events from being persisted.
+releases its request database session before committing the local terminal state in a short-lived
+transaction, then calls the upstream Agent Service, preventing later Agent events from being
+persisted. If a run becomes terminal (for example, cancelled) in the window between creating the
+upstream agent run and claiming its local mapping, the just-created agent run is cancelled upstream
+so it is not left orphaned.
 
 Backend-generated run failure messages, including plan failure events, use the locale captured
 when the run was created. Russian remains the default and `en-US` is supported.
@@ -95,6 +111,8 @@ permits only the public API's `GET` and `POST` methods.
 Frontend HTTP errors are restricted to the frozen `api/openapi.yaml` enum. Backend-only
 `timeout`/`agent_unavailable` failures are normalized to HTTP 500 `internal`; persisted SSE errors
 retain their more specific machine-readable code.
+The in-process rate limiter sweeps expired buckets globally on each check so one-off keys cannot
+accumulate indefinitely when traffic shifts to different users or routes.
 
 The automated suite verifies route registration and authentication boundaries, resource ownership,
 refresh rotation/replay, ticket hashing/scope/replay/expiry, persisted SSE reconnect, Contract A

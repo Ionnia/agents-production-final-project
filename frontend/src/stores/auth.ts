@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { api, setTokenGetter } from '../api/endpoints'
+import { ApiClientError } from '../api/client'
 import type { User } from '../api/types'
 
 const LS = 'travel.auth'
@@ -14,6 +15,7 @@ export const useAuthStore = defineStore('auth', () => {
   setTokenGetter(() => accessToken.value)
 
   function persist() { localStorage.setItem(LS, JSON.stringify({ refreshToken: refreshToken.value })) }
+  function clearAuth() { user.value = null; accessToken.value = null; refreshToken.value = null; localStorage.removeItem(LS) }
 
   async function login(email: string, password: string) {
     const r = await api.login({ email, password })
@@ -30,11 +32,16 @@ export const useAuthStore = defineStore('auth', () => {
       const { refreshToken: rt } = JSON.parse(raw) as { refreshToken: string | null }
       if (!rt) return
       const r = await api.refresh(rt); accessToken.value = r.access_token; refreshToken.value = r.refresh_token; persist(); user.value = await api.me()
-    } catch { localStorage.removeItem(LS) }
+    } catch (e) {
+      // Only a genuine 401 (invalid/expired refresh) should clear the stored token.
+      // Transient failures (500/502/503, network blips) must leave it intact so the
+      // session is recoverable on the next boot instead of forcing a re-login.
+      if (e instanceof ApiClientError && e.status === 401) clearAuth()
+    }
   }
   async function logout() {
     if (refreshToken.value) { try { await api.logout(refreshToken.value) } catch {} }
-    user.value = null; accessToken.value = null; refreshToken.value = null; localStorage.removeItem(LS)
+    clearAuth()
   }
   return { user, accessToken, refreshToken, ready, isAuthenticated, login, register, restore, logout }
 })

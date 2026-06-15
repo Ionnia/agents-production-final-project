@@ -9,10 +9,14 @@ import EmptyState from '../ui/EmptyState.vue'
 import { planStatusLabel } from '../../utils/planStatus'
 const groups = useGroupsStore()
 const plans = ref<PlanSummary[]>([])
+const props = defineProps<{ filter: string }>()
 const emit = defineEmits<{ navigate: [] }>()
-// Most recent first; the section caps the visible window to ~3 rows and scrolls.
+// Filter by destination, most recent first; the section caps the visible window to ~3 rows and scrolls.
 const sorted = computed(() =>
-  plans.value.slice().sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? '')),
+  plans.value
+    .filter(p => (p.destination ?? '').toLowerCase().includes(props.filter.toLowerCase()))
+    .slice()
+    .sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? '')),
 )
 onMounted(async () => {
   if (!groups.list.length) await groups.loadList()

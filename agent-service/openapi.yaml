@@ -299,6 +299,10 @@ components:
         selected_option_ids:
           type: array
           items: { type: string }
+        selected_option_labels:
+          type: array
+          items: { type: string }
+          description: User-facing labels resolved by the backend for selected options.
         freeform: { type: string }
     AddPoint:
       type: object

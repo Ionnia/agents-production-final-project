@@ -22,7 +22,8 @@ balance at outcome 0.85 / entity 1.0:
   reuses B1's agent as the executor inside a `draft → validate → (replan | finalize)` graph. The
   `validate` node is a **deterministic validation tool — a local stub of the backend's Contract B
   `POST /internal/plans/validate`** (unknown ids, budget total vs. group budget, child +
-  night-arrival); it is a guardrail/calculator, not the agent's reflection. The **LLM** decides what
+  night-arrival — arrival after 23:00 **or** before 06:00, for a group with a child or one introduced
+  by the request); it is a guardrail/calculator, not the agent's reflection. The **LLM** decides what
   to do with the violations on replan (re-search / `clarification` / `rejection`), looping up to
   `MAX_DRAFTS=3`. Adds reasoning-by-replanning over B1; genuine agent self-reflection (an LLM critic
   node) is deferred to a later baseline.
@@ -46,7 +47,9 @@ balance at outcome 0.85 / entity 1.0:
   `feasibility` node is a **deterministic calculator — a tool, not a decision**: it computes
   `total_cost_rub` (no double-count of package tours), the effective budget (request-stated budget
   overrides the group budget), `within_budget`, structural violations (destination mismatch,
-  child + night-arrival), **and the chosen plan's attributes** (`chosen`: flight direct/stops/baggage,
+  child + night-arrival — arrival after 23:00 **or** before 06:00, for a group with a child or one
+  introduced by the request, same threshold as B2's `validate`), **and the chosen plan's attributes**
+  (`chosen`: flight direct/stops/baggage,
   hotel stars/breakfast/cancellation) so the agent can match them against the user's stated hard
   requirements — the requirement list is not hard-coded. The **agents still decide** — Supervisor and
   Critic (LLM) pick `outcome_type` from those reliable facts: `recommendation` only if `within_budget`
