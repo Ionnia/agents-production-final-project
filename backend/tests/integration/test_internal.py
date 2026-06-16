@@ -60,3 +60,45 @@ async def test_search_and_plan_validation(client):
     assert package.status_code == 200
     assert package.json()["valid"] is True
     assert package.json()["budget_left_rub"] == 5300
+
+
+async def test_internal_can_save_agent_memory_preferences(client):
+    before = await client.get("/internal/groups/G-0001/context", headers=tool_headers())
+    assert before.status_code == 200
+    traveler_id = before.json()["members"][0]["traveler_id"]
+
+    payload = {
+        "preferences": [
+            {
+                "traveler_id": traveler_id,
+                "type": "departure_time",
+                "value": "avoid_early_departure",
+                "comment": "Пользователь обычно не любит ранние вылеты",
+                "confidence": 0.92,
+                "source": "agent_memory",
+            }
+        ]
+    }
+    saved = await client.post(
+        "/internal/groups/G-0001/preferences",
+        headers=tool_headers(),
+        json=payload,
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["saved"][0]["type"] == "departure_time"
+
+    duplicate = await client.post(
+        "/internal/groups/G-0001/preferences",
+        headers=tool_headers(),
+        json=payload,
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    assert duplicate.json()["saved"] == []
+    assert duplicate.json()["skipped"][0]["reason"] == "duplicate"
+
+    after = await client.get("/internal/groups/G-0001/context", headers=tool_headers())
+    assert any(
+        pref.get("value") == "avoid_early_departure"
+        for member in after.json()["members"]
+        for pref in member["preferences"]
+    )

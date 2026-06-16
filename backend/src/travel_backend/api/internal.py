@@ -3,10 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from ..errors import APIError
-from ..models import FlightOffer, GroupMember, HotelOffer, TourOffer, TravelGroup
+from ..models import FlightOffer, GroupMember, HotelOffer, Preference, TourOffer, TravelGroup
 from ..schemas import (
     FlightSearchRequest,
     HotelSearchRequest,
+    SaveMemoryPreferencesRequest,
     TourSearchRequest,
     ValidatePlanRequest,
 )
@@ -65,6 +66,66 @@ async def group_context(group_id: str, db: Database) -> dict:
         ],
         **({"history_summary": group.comment} if group.comment else {}),
     }
+
+
+@router.post("/groups/{group_id}/preferences")
+async def save_memory_preferences(
+    group_id: str,
+    body: SaveMemoryPreferencesRequest,
+    db: Database,
+) -> dict:
+    group = await any_group(db, group_id)
+    saved = []
+    skipped = []
+    members_by_id = {
+        key: member
+        for member in group.members
+        for key in (member.id, member.external_id)
+        if key
+    }
+    default_member = group.members[0] if group.members else None
+    if default_member is None:
+        raise APIError(404, "not_found")
+
+    for item in body.preferences:
+        pref_type = (item.type or "").strip() or None
+        pref_value = (item.value or "").strip() or None
+        comment = (item.comment or "").strip() or None
+        if not (pref_type or pref_value or comment):
+            skipped.append({"reason": "empty"})
+            continue
+        member = members_by_id.get(item.traveler_id or "") or default_member
+        exists = any(
+            pref.type == pref_type and pref.value == pref_value and pref.comment == comment
+            for pref in member.preferences
+        )
+        if exists:
+            skipped.append(
+                {
+                    "traveler_id": member.external_id or member.id,
+                    "type": pref_type,
+                    "value": pref_value,
+                    "reason": "duplicate",
+                }
+            )
+            continue
+        pref = Preference(member=member, type=pref_type, value=pref_value, comment=comment)
+        db.add(pref)
+        await db.flush()
+        saved.append(
+            {
+                "id": pref.id,
+                "traveler_id": member.external_id or member.id,
+                "type": pref.type,
+                "value": pref.value,
+                "comment": pref.comment,
+                **({"confidence": item.confidence} if item.confidence is not None else {}),
+                **({"source": item.source} if item.source else {}),
+            }
+        )
+
+    await db.commit()
+    return {"saved": saved, "skipped": skipped}
 
 
 @router.post("/flights/search")

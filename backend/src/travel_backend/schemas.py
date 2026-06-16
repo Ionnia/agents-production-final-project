@@ -30,6 +30,16 @@ class PreferenceInput(APIModel):
     comment: str | None = None
 
 
+class MemoryPreferenceInput(PreferenceInput):
+    traveler_id: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    source: str | None = Field(default=None, max_length=120)
+
+
+class SaveMemoryPreferencesRequest(APIModel):
+    preferences: list[MemoryPreferenceInput] = Field(default_factory=list, max_length=20)
+
+
 class MemberInput(APIModel):
     full_name: str = Field(min_length=1, max_length=200)
     age: int | None = Field(default=None, ge=0, le=130)

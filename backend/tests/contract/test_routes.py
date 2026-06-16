@@ -41,6 +41,7 @@ def test_frozen_contract_routes_are_registered():
         ("GET", "/api/v1/plans/{plan_id}/map"),
         ("GET", "/api/v1/plans/{plan_id}/calendar"),
         ("GET", "/internal/groups/{group_id}/context"),
+        ("POST", "/internal/groups/{group_id}/preferences"),
         ("POST", "/internal/flights/search"),
         ("POST", "/internal/hotels/search"),
         ("POST", "/internal/tours/search"),

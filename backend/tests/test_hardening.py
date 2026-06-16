@@ -55,6 +55,11 @@ async def test_every_internal_route_rejects_user_jwt(client, unique_email):
     headers["X-Correlation-ID"] = "user-jwt-is-not-a-service-token"
     calls = [
         ("GET", "/internal/groups/G-0001/context", None),
+        (
+            "POST",
+            "/internal/groups/G-0001/preferences",
+            {"preferences": [{"type": "meal", "value": "breakfast"}]},
+        ),
         ("POST", "/internal/flights/search", {"origin": "Moscow", "destination": "IST"}),
         ("POST", "/internal/hotels/search", {"destination": "IST"}),
         ("POST", "/internal/tours/search", {"destination": "IST"}),

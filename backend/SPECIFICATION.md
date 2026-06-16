@@ -13,8 +13,8 @@ runtime implementation lives in the installable `travel_backend` package.
 - JWT access authentication, atomically rotating hashed refresh tokens, and user ownership checks.
 - Persistent users, sessions, runs, messages, groups, plans, map points, calendar events, and SSE
   event history.
-- Read-only internal access to group context and offer search, protected by
-  `BACKEND_TOOL_TOKEN` and required `X-Correlation-ID`.
+- Internal access to group context, offer search, plan validation, and scoped preference-memory
+  writes, protected by `BACKEND_TOOL_TOKEN` and required `X-Correlation-ID`.
 - Agent Service run creation, SSE consumption, cancellation, semantic event normalization, and
   controlled timeout/unavailable errors. Each run stores the backend and agent run IDs, agent
   thread ID, agent stream URL, session, user, group, status, and correlation ID.
@@ -43,6 +43,9 @@ Startup transactionally reconciles flights, hotels, tours, travelers, preference
 scenario groups from `data/travelers/`. It restores missing rows, corrects seed-owned fields, and
 removes duplicate or stale seeded members/preferences without modifying user-created groups.
 Scenario groups remain internal-only. User-created groups are private and use UUIDs.
+Agent-extracted memory preferences are persisted as ordinary `Preference` rows on a group member
+through `POST /internal/groups/{group_id}/preferences`; duplicate type/value/comment triples are
+skipped by the backend.
 
 All environment variables listed in `.env.example` are required. There are no built-in JWT or
 service-token defaults.
