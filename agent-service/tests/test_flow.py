@@ -20,31 +20,60 @@ from agent_service.schemas import Answer, CreateRunRequest, PlannerResult
 class FakeRuntime:
     """Stands in for the Final LangGraph runtime; records the case it was handed."""
 
-    def __init__(self, response: dict) -> None:
+    def __init__(self, response: dict, memory: dict | None = None) -> None:
         self._response = response
+        self._memory = memory or {"preferences": []}
         self.last_case: dict | None = None
+        self.memory_calls: list[tuple[str, str, dict]] = []
 
     async def run(self, case: dict) -> str:
         self.last_case = case
         return json.dumps(self._response, ensure_ascii=False)
+
+    async def extract_memory(self, latest_user_message: str, user_transcript: str, group_context: dict) -> dict:
+        self.memory_calls.append((latest_user_message, user_transcript, group_context))
+        return self._memory
 
 
 class FakeContractB:
     def __init__(self, validation: dict | None = None) -> None:
         self._validation = validation or {"valid": True, "hard_violations": []}
         self.validated = False
+        self.saved_preferences: list[dict] = []
 
     async def group_context(self, group_id: str, correlation_id: str) -> dict:
-        return {"origin_city": "Moscow", "destination": "IST"}
+        return {
+            "group_id": group_id,
+            "origin_city": "Moscow",
+            "destination": "IST",
+            "members": [{"traveler_id": "T-1", "preferences": []}],
+        }
+
+    async def search_flights(self, body: dict, correlation_id: str) -> list[dict]:
+        return []
+
+    async def search_hotels(self, body: dict, correlation_id: str) -> list[dict]:
+        return []
+
+    async def search_tours(self, body: dict, correlation_id: str) -> list[dict]:
+        return []
 
     async def validate_plan(self, body: dict, correlation_id: str) -> dict:
         self.validated = True
         return self._validation
 
+    async def save_preferences(self, group_id: str, body: dict, correlation_id: str) -> dict:
+        self.saved_preferences.extend(body.get("preferences", []))
+        return {"saved": body.get("preferences", []), "skipped": []}
 
-def _planner(response: dict, contract_b: FakeContractB | None = None) -> tuple[Planner, FakeRuntime]:
+
+def _planner(
+    response: dict,
+    contract_b: FakeContractB | None = None,
+    memory: dict | None = None,
+) -> tuple[Planner, FakeRuntime]:
     planner = Planner(Settings(), contract_b or FakeContractB())
-    runtime = FakeRuntime(response)
+    runtime = FakeRuntime(response, memory)
     planner._final_runtime = runtime  # skip the heavyweight build
     return planner, runtime
 
@@ -124,6 +153,49 @@ async def test_group_recommendation_validated_via_contract_b_and_can_downgrade()
     assert contract_b.validated  # group path goes through Contract B
     assert result.outcome_type == "clarification"
     assert "Превышен бюджет" in result.question_options
+
+
+@pytest.mark.asyncio
+async def test_memory_agent_saves_high_confidence_group_preferences():
+    contract_b = FakeContractB()
+    planner, runtime = _planner(
+        {"outcome_type": "clarification", "entities": {}, "answer": "ok", "options": []},
+        contract_b,
+        memory={
+            "preferences": [
+                {
+                    "traveler_id": "T-1",
+                    "type": "departure_time",
+                    "value": "avoid_early_departure",
+                    "comment": "Пользователь не любит ранние вылеты",
+                    "confidence": 0.91,
+                },
+                {
+                    "type": "destination",
+                    "value": "istanbul",
+                    "comment": "Разовый факт текущей поездки",
+                    "confidence": 0.4,
+                },
+            ]
+        },
+    )
+    await planner.plan(
+        _run(
+            message="Я обычно не люблю ранние вылеты, лучше после 10 утра",
+            group_id="G-0001",
+        )
+    )
+    assert runtime.memory_calls
+    assert contract_b.saved_preferences == [
+        {
+            "traveler_id": "T-1",
+            "type": "departure_time",
+            "value": "avoid_early_departure",
+            "comment": "Пользователь не любит ранние вылеты",
+            "confidence": 0.91,
+            "source": "agent_memory",
+        }
+    ]
 
 
 @pytest.mark.asyncio

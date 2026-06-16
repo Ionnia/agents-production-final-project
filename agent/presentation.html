@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Как я делал агента — презентация</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root { --bg:#0c1a2b; --bg2:#0e2238; --ink:#eaf2fb; --muted:#9fb3c8; --accent:#5db0ff; --good:#7ee2a8; --warn:#e6c86a; --line:#1f3852; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--ink);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+         scroll-snap-type:y mandatory; overflow-y:scroll; scroll-behavior:smooth; }
+  .slide { min-height:100vh; scroll-snap-align:start; display:flex; flex-direction:column; justify-content:center;
+           padding:6vh 8vw; position:relative; border-bottom:1px solid var(--line);
+           background:radial-gradient(1200px 600px at 80% -10%, var(--bg2), var(--bg)); }
+  .kicker { color:var(--accent); font-weight:800; letter-spacing:.14em; text-transform:uppercase; font-size:13px; margin-bottom:14px; }
+  h1 { font-size:clamp(30px,5vw,58px); margin:0 0 14px; line-height:1.05; }
+  h2 { font-size:clamp(24px,3.4vw,40px); margin:0 0 18px; line-height:1.12; }
+  p.big { font-size:clamp(17px,1.9vw,24px); color:var(--ink); max-width:60ch; margin:.3em 0; }
+  ul { font-size:clamp(15px,1.7vw,21px); line-height:1.6; max-width:64ch; color:var(--ink); }
+  li { margin:.32em 0; }
+  .muted { color:var(--muted); }
+  .good { color:var(--good); font-weight:700; }
+  .warn { color:var(--warn); font-weight:700; }
+  .row { display:flex; gap:28px; flex-wrap:wrap; align-items:flex-start; }
+  .col { flex:1 1 320px; }
+  code { background:#0a1422; border:1px solid var(--line); border-radius:5px; padding:1px 7px; font-size:.9em; }
+  table { border-collapse:collapse; font-size:clamp(14px,1.6vw,19px); margin-top:8px; }
+  th,td { border:1px solid var(--line); padding:9px 16px; text-align:center; }
+  th { background:#13283f; } td:first-child,th:first-child { text-align:left; }
+  .num { font-size:13px; color:var(--muted); position:absolute; bottom:22px; right:34px; }
+  .hint { position:fixed; bottom:14px; left:18px; color:var(--muted); font-size:12px; opacity:.7; z-index:5; }
+  .mermaid { background:#0a1422; border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .tag { display:inline-block; padding:3px 12px; border-radius:999px; font-weight:700; font-size:13px; }
+  .tg-llm { background:#13314f; color:#9cc6f5; } .tg-det { background:#3a331c; color:#e6c86a; }
+  .card { background:#0e2034; border:1px solid var(--line); border-radius:14px; padding:16px 18px; }
+  .card h3 { margin:0 0 6px; font-size:18px; } .card p { margin:0; color:var(--muted); font-size:15px; }
+</style>
+</head>
+<body>
+
+<section class="slide">
+  <div class="kicker">Промышленная разработка агентов · финальный проект</div>
+  <h1>Агент планирования путешествий<br/>«КудаЕдем»</h1>
+  <p class="big muted">Как я строил агента: от простого бейзлайна к продакшн-архитектуре — через измерения
+     и осознанные изменения.</p>
+  <p class="big">Итог: <span class="good">outcome 0.90 · entity 1.0</span>, развёрнут как микросервис под
+     замороженные контракты бэкенда.</p>
+  <div class="num">1 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Задача</div>
+  <h2>Подобрать поездку под группу, бюджет и ограничения — и перестроить при изменении вводных</h2>
+  <ul>
+    <li>Выбрать <b>перелёт + отель + тур</b> с учётом состава группы, бюджета, предпочтений и правил сервиса.</li>
+    <li>Уметь <b>уточнять</b> недостающее, <b>отказывать</b> при невыполнимом, <b>эскалировать</b> визовые риски.</li>
+    <li>Две метрики: <b>outcome_accuracy</b> (правильный тип ответа) и <b>entity_accuracy</b> (правильные id).</li>
+  </ul>
+  <div class="num">2 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Подход</div>
+  <h2>Не один прототип, а <span class="good">прогрессия бейзлайнов</span> — каждый шаг измеряю и делаю осознанное изменение</h2>
+  <p class="big">B1 → B2 → B3 → Final → Final-ranked. Один и тот же eval-набор (<code>data/qa/qa.jsonl</code>),
+     поэтому шаги сравнимы. Каждое изменение — ответ на конкретную слабость предыдущего.</p>
+  <div class="num">3 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Бейзлайн B1</div>
+  <h2>Один ReAct-агент: Tool + RAG</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li>GigaChat с инструментами по CSV (перелёты/отели/туры) + RAG по правилам.</li>
+        <li>Сам решает, какие tools звать, выдаёт один JSON-ответ.</li>
+        <li><b>Слабость:</b> нет самопроверки — бюджет и ограничения «на совести» модели.</li>
+      </ul>
+    </div>
+    <div class="col"><div class="card"><h3>Метрика</h3><p>outcome <b>0.85</b> · entity <b>0.67</b></p></div></div>
+  </div>
+  <div class="num">4 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Бейзлайн B2</div>
+  <h2>LangGraph: <span class="tag tg-llm">агент</span> предлагает → <span class="tag tg-det">validate</span> проверяет → replan</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li>Добавил <b>детерминированную проверку</b> бюджета/ограничений (калькулятор-факт, не LLM — арифметику модели нельзя доверять).</li>
+        <li>Петля: нарушение → агент переигрывает решение.</li>
+        <li><b>Вывод:</b> заземление на факты резко поднимает outcome, но entity всё ещё слабый (одиночный агент промахивается по id).</li>
+      </ul>
+    </div>
+    <div class="col"><div class="card"><h3>Метрика</h3><p>outcome <b class="good">0.95</b> · entity 0.87</p></div></div>
+  </div>
+  <div class="num">5 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Бейзлайн B3</div>
+  <h2>Мультиагент (MAS): supervisor + специалисты</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li>Отдельные агенты по перелётам/отелям/турам/правилам → <b>entity взлетел до 1.0</b>.</li>
+        <li><b>Но outcome просел (~0.75):</b> supervisor решает по текстовым сводкам, далеко от данных → шум.</li>
+        <li><b>Честный вывод:</b> сложность не бесплатна. Специалисты дают entity, но решение нужно держать у фактов.</li>
+      </ul>
+    </div>
+    <div class="col"><div class="card"><h3>Метрика</h3><p>outcome <b class="warn">~0.75</b> · entity <b class="good">1.0</b></p></div></div>
+  </div>
+  <div class="num">6 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Final — синтез</div>
+  <h2>Лучшее из B2 и B3: <span class="good">entity от специалистов + outcome на фактах</span></h2>
+  <ul>
+    <li>Специалисты находят id (entity ≈ 1.0), детерминированный <code>feasibility</code> считает факты
+        (стоимость, бюджет, нарушения, атрибуты плана).</li>
+    <li>Supervisor/Critic выбирают исход <b>по этим фактам</b> и порядку решения; по умолчанию <code>clarification</code>,
+        <code>rejection</code> — только при явном запрете компромисса.</li>
+    <li>Доменные правила (эскалация/дети/багаж) вынес в <b>RAG-документ</b>, а не в промпт — убрал подгонку под кейсы.</li>
+  </ul>
+  <div class="card" style="margin-top:14px;max-width:360px"><h3>Метрика</h3><p>outcome <b class="good">0.90</b> · entity <b class="good">1.0</b> — оба высоких</p></div>
+  <div class="num">7 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Final-ranked — продакшн</div>
+  <h2>Финальный выбор: специалисты <span class="good">ранжируют</span> офферы, а не просто фильтруют</h2>
+  <div class="row">
+    <div class="col">
+      <ul>
+        <li>Specialist отдаёт <code>ranked_candidates</code> (отсортированный список со score), код берёт первый
+            <b>реально существующий</b> id (защита от галлюцинаций).</li>
+        <li>Тоньше понимает нюансы: «комфортный», «без лишних пересадок», «не премиум» — там, где
+            keyword-фильтр Final промахивался.</li>
+        <li>Если ранжирование пустое/выдуманное — откат на детерминированный выбор. Надёжность сохранена.</li>
+      </ul>
+    </div>
+    <div class="col"><div class="card"><h3>Метрика</h3><p>outcome <b class="good">0.90</b> · entity <b class="good">1.0</b></p></div></div>
+  </div>
+  <div class="num">8 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Финальная архитектура</div>
+  <h2>Один LangGraph-граф</h2>
+  <div class="mermaid">
+flowchart LR
+  R["resolve [det]"] --> LC["load_context<br/>Contract B + RAG"]
+  R -.->|вопрос/болталка/уточнение| X((быстрый ответ))
+  LC --> SP["специалисты (LLM)<br/>ranked_candidates"]
+  SP --> FE["feasibility [det]<br/>ФАКТЫ"]
+  FE --> SU["Supervisor (LLM)<br/>решение по фактам"]
+  SU --> CR["Critic (LLM)"]
+  CR -.->|replan ×2| SU
+  CR --> OUT(("исход → SSE"))
+  classDef llm fill:#dae8fc,stroke:#6c8ebf,color:#111;
+  classDef det fill:#ffe6cc,stroke:#d79b00,color:#111;
+  classDef data fill:#d5e8d4,stroke:#82b366,color:#111;
+  classDef term fill:#f5f5f5,stroke:#666,color:#111;
+  class R,FE det; class SP,SU,CR llm; class LC data; class X,OUT term;
+  </div>
+  <p class="big muted">Принцип: <b>факты считает код, тип ответа выбирает агент.</b> Развёрнут в agent-service
+     под Contract A; данные и валидация — через Contract B.</p>
+  <div class="num">9 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Сравнение</div>
+  <h2>Что дал каждый шаг</h2>
+  <table>
+    <tr><th>Версия</th><th>outcome</th><th>entity</th><th>идея</th></tr>
+    <tr><td>B1 — single Tool+RAG</td><td>0.85</td><td>0.67</td><td>базовый агент</td></tr>
+    <tr><td>B2 — plan + validate</td><td class="good">0.95</td><td>0.87</td><td>факты → стабильный outcome</td></tr>
+    <tr><td>B3 — MAS</td><td class="warn">~0.75</td><td class="good">1.0</td><td>специалисты → entity</td></tr>
+    <tr><td>Final — синтез</td><td class="good">0.90</td><td class="good">1.0</td><td>факты + специалисты</td></tr>
+    <tr><td><b>Final-ranked (прод)</b></td><td class="good">0.90</td><td class="good">1.0</td><td>+ LLM-ранжирование офферов</td></tr>
+  </table>
+  <p class="big muted" style="font-size:15px">Метрики иллюстрируют <b>размен</b> (outcome ↔ entity), а не строгий A/B —
+     QA-набор по ходу дорабатывался. Главный вывод устойчив: <b>баланс даёт синтез</b>.</p>
+  <div class="num">10 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Проблемы и ограничения · критерий 5</div>
+  <h2>С чем столкнулся</h2>
+  <ul>
+    <li><b>LLM-арифметика ненадёжна</b> → бюджет считает детерминированный калькулятор, не модель.</li>
+    <li><b>Оверфит vs обобщение</b> → доменные правила ушли в RAG-документ, промпты остались общими.</li>
+    <li><b>LLM-вариативность</b> на пограничных кейсах (outcome пляшет при <code>temperature=0</code>) → честно мерить как диапазон.</li>
+    <li><b>Граница reject ↔ clarification</b> — местами спорна в самой разметке.</li>
+    <li><b>Развитие:</b> persistent-память графа, больше QA-кейсов, метрики по категориям, убрать остатки CSV-fallback.</li>
+  </ul>
+  <div class="num">11 / 12</div>
+</section>
+
+<section class="slide">
+  <div class="kicker">Итог</div>
+  <h2>Зрелость по рубрике и вывод</h2>
+  <div class="row">
+    <div class="col"><ul>
+      <li><b>Reasoning</b> — недетерминированная цепочка + переплан по фактам.</li>
+      <li><b>Reflection</b> — критик сверяет исход с фактами.</li>
+      <li><b>Action</b> — агенты как инструменты, структурные вызовы.</li>
+      <li><b>Memory</b> — транскрипт + долговременные предпочтения через Contract B.</li>
+      <li><b>Domain</b> — RAG по правилам сервиса.</li>
+    </ul></div>
+    <div class="col"><p class="big">Главный принцип, который всё держит:<br/>
+      <span class="good">факты считает код — решение принимает агент.</span></p>
+      <p class="big muted">Это дало одновременно высокий outcome и entity, без подгонки под тест.</p>
+    </div>
+  </div>
+  <div class="num">12 / 12</div>
+</section>
+
+<div class="hint">← → / Space — листать слайды</div>
+<script>
+  mermaid.initialize({ startOnLoad:true, theme:"dark", securityLevel:"loose", flowchart:{ curve:"basis", useMaxWidth:true } });
+  const slides = [...document.querySelectorAll('.slide')];
+  let i = 0;
+  function go(n){ i = Math.max(0, Math.min(slides.length-1, n)); slides[i].scrollIntoView({behavior:'smooth'}); }
+  addEventListener('keydown', e => {
+    if (['ArrowRight','ArrowDown',' ','PageDown'].includes(e.key)) { e.preventDefault(); go(i+1); }
+    else if (['ArrowLeft','ArrowUp','PageUp'].includes(e.key)) { e.preventDefault(); go(i-1); }
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(slides.length-1);
+  });
+  // keep index in sync when the user scrolls manually
+  const io = new IntersectionObserver(es => es.forEach(en => { if (en.isIntersecting) i = slides.indexOf(en.target); }),
+                                      { threshold:0.6 });
+  slides.forEach(s => io.observe(s));
+</script>
+</body>
+</html>

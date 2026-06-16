@@ -61,3 +61,13 @@ class ContractBClient:
 
     async def validate_plan(self, body: dict[str, Any], correlation_id: str) -> dict[str, Any]:
         return await self._request("POST", "plans/validate", correlation_id, json=body)
+
+    async def save_preferences(
+        self, group_id: str, body: dict[str, Any], correlation_id: str
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"groups/{group_id}/preferences",
+            correlation_id,
+            json=body,
+        )

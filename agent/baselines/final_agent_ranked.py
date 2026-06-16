@@ -9,18 +9,6 @@ from typing import Any, TypedDict
 
 from langgraph.graph import START, END, StateGraph
 
-# Final = entity-машинерия B3 (контекст + специалисты) + outcome, заземлённый ФАКТАМИ выполнимости.
-# Детерминирован только калькулятор фактов (стоимость/бюджет/нарушения) — это инструмент, а не решение;
-# тип исхода выбирают LLM-агенты (supervisor/critic) по этим фактам. Паттерн B2: грунт — tool, решение — агент.
-#
-# Поверх исследовательского графа добавлены два продакшн-свойства, нужных живому чату (не QA-прогону):
-#   1) Память диалога: планировщик agent-service склеивает всю переписку в case["user_request"] и
-#      отдельно кладёт реплики пользователя в case["user_text_only"] — так агент не переспрашивает
-#      то, что уже сказано.
-#   2) Работа без заранее выбранной группы: направление/город вылета извлекаются из переписки и
-#      сопоставляются с каталогом доступных направлений (travel_catalog). Если направление не из
-#      каталога или неоднозначно — агент задаёт уточняющий вопрос с ВАРИАНТАМИ (а не только свободный
-#      ввод). Поведение QA-кейсов (с group_id) полностью сохранено.
 import llm_tool_rag_baseline as b1
 import mas_supervisor_baseline as b3
 import travel_catalog as cat
@@ -131,6 +119,38 @@ def _has_any_destination_mention(text: str) -> bool:
 
 
 def _conversation_kind(text: str) -> str:
+    """Классификация намерения реплики через LLM (минимум детерминизма).
+    Детерминированный keyword-классификатор остаётся ТОЛЬКО как fallback — если LLM недоступен
+    или вернул мусор, граф не должен падать."""
+    if not (text or "").strip():
+        return "out_of_scope"
+    prompt = (
+        "Классифицируй сообщение пользователя travel-сервиса в РОВНО одну категорию. "
+        "Верни только minified JSON: {\"kind\":\"travel|policy_info|smalltalk|out_of_scope\"}.\n"
+        "- travel: пользователь хочет, чтобы ему ПОДОБРАЛИ или ИЗМЕНИЛИ конкретную поездку — есть "
+        "намерение ехать (называет направление/даты/бюджет/состав, 'подбери', 'хочу поехать', в т.ч. "
+        "косвенно 'хочется к морю', 'надо уехать к солнцу'). Если намерения ехать нет — это НЕ travel.\n"
+        "- policy_info: ИНФОРМАЦИОННЫЙ вопрос без просьбы подобрать поездку — про правила сервиса "
+        "(отмена, багаж, тарифы, ночной прилёт, документы/визы), А ТАКЖЕ общие вопросы-советы и "
+        "сравнения ('что лучше', 'всегда ли … лучше', 'в чём разница', 'стоит ли', 'чем отличается') "
+        "про туры/отели/перелёты. Упоминание слов тур/отель/рейс само по себе НЕ делает запрос travel, "
+        "если нет намерения подобрать конкретную поездку.\n"
+        "- smalltalk: приветствие, благодарность, болтовня без задачи.\n"
+        "- out_of_scope: тема не про путешествия и не про правила сервиса.\n"
+        f"Сообщение: {compact(text)}"
+    )
+    try:
+        data = ask_json(prompt)
+        kind = data.get("kind") if isinstance(data, dict) else None
+        if kind in {"travel", "policy_info", "smalltalk", "out_of_scope"}:
+            return kind
+    except Exception:  # noqa: BLE001 — классификация не должна ронять граф
+        pass
+    return _conversation_kind_keywords(text)
+
+
+def _conversation_kind_keywords(text: str) -> str:
+    """Детерминированный fallback-классификатор (используется только при сбое LLM)."""
     low = (text or "").lower().strip()
     info_markers = [
         "можно ли", "что считается", "что входит", "всегда ли", "как вы", "какие правила",
@@ -403,6 +423,100 @@ def _best_hotel_from_context(state: CaseState) -> str | None:
     ).get("hotel_id")
 
 
+def _ranked_ids(analysis: dict[str, Any], key: str) -> list[str]:
+    ranked = analysis.get("ranked_candidates")
+    result: list[str] = []
+    if isinstance(ranked, list):
+        for item in ranked:
+            value = item.get(key) if isinstance(item, dict) else item
+            if isinstance(value, str) and value and value not in result:
+                result.append(value)
+    recommended = analysis.get(f"recommended_{key}")
+    if isinstance(recommended, str) and recommended and recommended not in result:
+        result.append(recommended)
+    acceptable = analysis.get("acceptable_ids")
+    if isinstance(acceptable, list):
+        for value in acceptable:
+            if isinstance(value, str) and value and value not in result:
+                result.append(value)
+    return result
+
+
+def _context_ids(state: CaseState, table: str, key: str) -> set[str]:
+    return {
+        row[key]
+        for row in _table_from_context(state, table)
+        if isinstance(row, dict) and isinstance(row.get(key), str)
+    }
+
+
+def _first_existing_ranked(state: CaseState, table: str, key: str, ids: list[str]) -> str | None:
+    existing = _context_ids(state, table, key)
+    for value in ids:
+        if value in existing:
+            return value
+    return None
+
+
+def flight_node(state: CaseState) -> dict[str, Any]:
+    context = state["context"]
+    intent = state["intent_analysis"]
+    prompt = (
+        "Ты FlightAgent. Проанализируй только перелёты и верни minified JSON.\n"
+        "Схема: {\"recommended_flight_id\":string|null,"
+        "\"ranked_candidates\":[{\"flight_id\":string,\"score\":number,\"reason\":\"...\"}],"
+        "\"acceptable_ids\":[string],\"risks\":[string],\"reason\":\"...\"}\n"
+        "Сначала сформируй ranked_candidates: отсортируй реальные context.flights от лучшего к худшему "
+        "по соответствию запросу, ограничениям, багажу, пересадкам, времени, детям и цене. "
+        "recommended_flight_id должен быть первым id из ranked_candidates. Не придумывай id.\n"
+        f"Intent: {compact(intent)}\n"
+        f"Контекст: {compact(context)}"
+    )
+    return {"flight_analysis": ask_json(prompt)}
+
+
+def hotel_node(state: CaseState) -> dict[str, Any]:
+    context = state["context"]
+    intent = state["intent_analysis"]
+    prompt = (
+        "Ты HotelAgent. Проанализируй только отели и верни minified JSON.\n"
+        "Схема: {\"recommended_hotel_id\":string|null,"
+        "\"ranked_candidates\":[{\"hotel_id\":string,\"score\":number,\"reason\":\"...\"}],"
+        "\"acceptable_ids\":[string],\"risks\":[string],\"reason\":\"...\"}\n"
+        "Сначала сформируй ranked_candidates: отсортируй реальные context.hotels от лучшего к худшему.\n"
+        "Стратегия ранжирования:\n"
+        "1. Сначала отфильтруй обязательные требования пользователя и preferences: минимальный класс отеля, "
+        "завтрак, бесплатная отмена, размещение детей, локация/стиль, если они явно есть.\n"
+        "2. Если несколько отелей удовлетворяют обязательным требованиям, выбирай cost-efficient fit: "
+        "более дешёвый подходящий вариант выше более дорогого premium-варианта.\n"
+        "3. 5* или самый высокий рейтинг ставь первым только если пользователь явно просит premium/люкс/5*, "
+        "максимальный комфорт или лучший рейтинг. Если в preferences указано 4plus, это значит 4* и выше, "
+        "а не обязательный выбор 5*.\n"
+        "4. Держи дорогой premium-вариант в ranked_candidates как альтернативу, но не делай его "
+        "recommended_hotel_id без явного premium-запроса.\n"
+        "recommended_hotel_id должен быть первым id из ranked_candidates. Не придумывай id.\n"
+        f"Intent: {compact(intent)}\n"
+        f"Контекст: {compact(context)}"
+    )
+    return {"hotel_analysis": ask_json(prompt)}
+
+
+def tour_node(state: CaseState) -> dict[str, Any]:
+    context = state["context"]
+    intent = state["intent_analysis"]
+    prompt = (
+        "Ты TourAgent. Проанализируй пакетные туры и верни minified JSON.\n"
+        "Схема: {\"recommended_tour_id\":string|null,\"linked_hotel_id\":string|null,"
+        "\"ranked_candidates\":[{\"tour_id\":string,\"score\":number,\"reason\":\"...\"}],"
+        "\"tour_is_preferred\":true|false,\"risks\":[string],\"reason\":\"...\"}\n"
+        "Если запрос про пляжный отдых, трансфер или готовый пакет, тур может быть предпочтительнее "
+        "раздельной сборки. ranked_candidates сортируй только из реальных context.tours. Не придумывай id.\n"
+        f"Intent: {compact(intent)}\n"
+        f"Контекст: {compact(context)}"
+    )
+    return {"tour_analysis": ask_json(prompt)}
+
+
 def load_context_node(state: CaseState) -> dict[str, Any]:
     case = state["case"]
     resolved = state.get("resolve") or {}
@@ -461,24 +575,31 @@ def load_context_node(state: CaseState) -> dict[str, Any]:
 
 
 def picks_from_specialists(state: CaseState) -> dict[str, Any]:
-    """Те же id, что попадут в итоговые entities (см. carry_entities в B3).
-    Для flight/hotel приоритет у фактов из контекста: они уже отфильтрованы по направлению
-    и жёстким ограничениям. LLM-специалисты остаются запасным вариантом."""
+    """Эксперимент ranked candidates: LLM-специалисты ранжируют варианты, а код только
+    проверяет, что выбранный id реально есть в context. Детерминированный best_* — fallback."""
     flight = state.get("flight_analysis") or {}
     hotel = state.get("hotel_analysis") or {}
     tour = state.get("tour_analysis") or {}
 
-    def first_acceptable(analysis: dict[str, Any]) -> Any:
-        ids = analysis.get("acceptable_ids")
-        return ids[0] if isinstance(ids, list) and ids else None
-
     return {
-        "flight_id": _best_flight_from_context(state) or flight.get("recommended_flight_id") or first_acceptable(flight),
-        "hotel_id": (
-            _best_hotel_from_context(state)
-            or hotel.get("recommended_hotel_id") or tour.get("linked_hotel_id") or first_acceptable(hotel)
+        "flight_id": (
+            _first_existing_ranked(state, "flights", "flight_id", _ranked_ids(flight, "flight_id"))
+            or _best_flight_from_context(state)
         ),
-        "tour_id": tour.get("recommended_tour_id"),
+        "hotel_id": (
+            _first_existing_ranked(state, "hotels", "hotel_id", _ranked_ids(hotel, "hotel_id"))
+            or (
+                tour.get("linked_hotel_id")
+                if isinstance(tour.get("linked_hotel_id"), str)
+                and tour.get("linked_hotel_id") in _context_ids(state, "hotels", "hotel_id")
+                else None
+            )
+            or _best_hotel_from_context(state)
+        ),
+        "tour_id": (
+            _first_existing_ranked(state, "tours", "tour_id", _ranked_ids(tour, "tour_id"))
+            or tour.get("recommended_tour_id")
+        ),
     }
 
 
@@ -490,9 +611,9 @@ def carry_entities(draft: dict[str, Any], state: CaseState) -> dict[str, Any]:
     if not isinstance(ents, dict):
         ents = {}
     picks = picks_from_specialists(state)
-    ents["flight_id"] = ents.get("flight_id") or picks.get("flight_id")
+    ents["flight_id"] = picks.get("flight_id") or ents.get("flight_id")
     ents["hotel_id"] = picks.get("hotel_id") or ents.get("hotel_id")
-    ents["tour_id"] = ents.get("tour_id") or picks.get("tour_id")
+    ents["tour_id"] = picks.get("tour_id") or ents.get("tour_id")
     fixed["entities"] = ents
     return fixed
 

@@ -40,8 +40,10 @@ contract were frozen first, and each team built against the frozen OpenAPI docum
   frontend; it persists the plan the agent proposes.
 - The **agent service** is a separate microservice (LangGraph runtime). It reasons, retrieves from
   policy documents (RAG), calls the LLM, and **pulls business data from the backend's internal API**
-  (Variant B). It never talks to the frontend and never writes business data — it *proposes* a draft
-  plan that the backend persists.
+  (Variant B). It never talks to the frontend and never writes plans or inventory — it *proposes* a
+  draft plan that the backend persists. The one scoped write-tool is durable preference memory:
+  `MemoryAgent` extracts stable user/group preferences and asks the backend to save them as
+  backend-owned group preferences.
 - **Contracts:** the only frontend↔backend surface is the `api/` module's OpenAPI document; the
   backend↔agent surface is the `agent-service/` module's two OpenAPI documents.
 - The **domain data** (`data/`) is the synthetic dataset: offers/travelers back the business DB,
@@ -56,12 +58,14 @@ is not `ready` the map is read-only. The user corrects the route by submitting a
 added/removed points, which starts a new rebuild run.
 
 The conversation is **stateful across turns**: every user turn is recorded on the agent thread and
-the whole transcript is fed back into the agent, so it never re-asks for facts already given. A user
-can plan **without first selecting a group** — the agent resolves the destination/origin from the
-conversation against its destination catalogue and asks closed **clarifying questions with selectable
-options** (e.g. the available destinations) when something is missing or out of catalogue. When the
-plan is ready it is presented **inline in the chat for approval** (map link, flight/hotel/tour,
-total); accepting persists it. Lifecycles:
+the whole transcript is fed back into the agent, so it never re-asks for facts already given. For
+group-scoped runs the agent also extracts durable preferences from the latest turn and persists them
+through Contract B, so future group context includes those memories. A user can plan **without first
+selecting a group** — the agent resolves the destination/origin from the conversation against its
+destination catalogue and asks closed **clarifying questions with selectable options** (e.g. the
+available destinations) when something is missing or out of catalogue. When the plan is ready it is
+presented **inline in the chat for approval** (map link, flight/hotel/tour, total); accepting
+persists it. Lifecycles:
 [`api/SPECIFICATION.md`](./api/SPECIFICATION.md) (frontend↔backend) and
 [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) (backend↔agent).
 
@@ -74,7 +78,7 @@ total); accepting persists it. Lifecycles:
 | **Frontend** | [`frontend/`](./frontend/) | [`frontend/SPECIFICATION.md`](./frontend/SPECIFICATION.md) | Implemented: chat UI, dithered backgrounds, side panel, plan map/calendar, auth — mock-backed (MSW), typed from `api/openapi.yaml` |
 | **Domain data** | [`data/`](./data/) | [`README.md`](./README.md) (dataset description) | Present (synthetic seed data) |
 | **Backend service (BFF)** | [`backend/`](./backend/) | [`backend/SPECIFICATION.md`](./backend/SPECIFICATION.md) | Implemented: FastAPI, persistence, auth, internal tools, Agent Service client, SSE |
-| **Agent Service** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) | Implemented: FastAPI Contract A (runs+SSE), uses Final agent graph, validates draft plans via Contract B |
+| **Agent Service** | [`agent-service/`](./agent-service/) | [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md) | Implemented: FastAPI Contract A (runs+SSE), uses Final agent graph, validates draft plans and saves durable preference memories via Contract B |
 | **Agent experiments/runtime** | [`agent/`](./agent/) | [`agent/SPECIFICATION.md`](./agent/SPECIFICATION.md) | Research baselines B1/B2/B3 + selected Final graph imported by the Agent Service |
 
 ### 2.1 Frontend↔Backend contract (`api/`)
@@ -91,8 +95,9 @@ The inner boundary that lets the backend and agent teams develop independently �
 3.1 documents: **Contract A** (`openapi.yaml`, Backend → Agent Service: create/stream/cancel runs
 over `/v1`, SSE events) and **Contract B** (`internal-tools-openapi.yaml`, Agent → Backend Internal
 Tool API over `/internal`: read business data + validate plans). The agent is a **stateful**
-LangGraph runtime; it pulls business data via Contract B (Variant B) and **proposes** a draft plan
-the backend persists. See [`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md).
+LangGraph runtime; it pulls business data via Contract B (Variant B), saves scoped preference
+memories via Contract B, and **proposes** a draft plan the backend persists. See
+[`agent-service/SPECIFICATION.md`](./agent-service/SPECIFICATION.md).
 
 ### 2.3 Frontend (`frontend/`)
 

@@ -7,12 +7,14 @@ info:
     name: UNLICENSED
   description: |
     Internal API the **backend (BFF)** exposes to the **agent microservice** so the agent can read
-    business data (group context, flight/hotel/tour offers) and validate a candidate plan without
-    touching the business DB directly. This keeps the backend the single owner of business data and
-    access control (Variant B).
+    business data (group context, flight/hotel/tour offers), validate a candidate plan, and persist
+    scoped preference memories without touching the business DB directly. This keeps the backend the
+    single owner of business data and access control (Variant B).
 
-    **Read-only by design:** the agent never writes business data here. It proposes a draft plan over
-    the Contract A SSE stream (`agent-service/openapi.yaml`); the backend validates and persists.
+    **Backend-owned writes by design:** the agent never writes plans or inventory here. It proposes a
+    draft plan over the Contract A SSE stream (`agent-service/openapi.yaml`); the backend validates
+    and persists plans. The only write-tool in Contract B is durable preference memory, where the
+    backend deduplicates and owns the resulting group preferences.
     Design: `docs/superpowers/specs/2026-06-14-backend-agent-api-design.md`.
 
     ## Conventions
@@ -56,6 +58,29 @@ paths:
               schema: { $ref: '#/components/schemas/GroupContext' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{group_id}/preferences:
+    post:
+      tags: [Groups]
+      summary: Save durable preference memories extracted by the agent
+      operationId: saveGroupPreferences
+      parameters:
+        - $ref: '#/components/parameters/GroupId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavePreferencesRequest' }
+      responses:
+        '200':
+          description: Saved and skipped preference memories
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavePreferencesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
   /flights/search:
     post:
@@ -205,6 +230,36 @@ components:
         type: { type: string, description: 'e.g. departure_time, hotel_rating' }
         value: { type: string }
         comment: { type: string }
+    MemoryPreference:
+      type: object
+      description: Durable preference extracted by the agent and saved into backend-owned memory.
+      properties:
+        traveler_id: { type: string }
+        type: { type: string, description: 'e.g. baggage, departure_time, meal' }
+        value: { type: string }
+        comment: { type: string }
+        confidence: { type: number, minimum: 0, maximum: 1 }
+        source: { type: string, default: agent_memory }
+    SavePreferencesRequest:
+      type: object
+      required: [preferences]
+      properties:
+        preferences:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/MemoryPreference' }
+    SavePreferencesResponse:
+      type: object
+      required: [saved, skipped]
+      properties:
+        saved:
+          type: array
+          items: { $ref: '#/components/schemas/MemoryPreference' }
+        skipped:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
     GroupMember:
       type: object
       required: [traveler_id]

@@ -26,6 +26,12 @@ The service uses the experimental Final agent from `../agent/baselines/final_age
 `GIGACHAT_CREDENTIALS` and the policy index from `agent/scripts/build_policy_index.py`; runs fail
 explicitly if the Final agent cannot be initialized.
 
+For runs with a `group_id`, the planner first runs a lightweight `MemoryAgent`: it extracts durable
+preferences from the latest user message and saves them through backend Contract B
+`POST /internal/groups/{group_id}/preferences`. One-off facts like current-trip dates/destination
+are filtered out, while stable preferences such as baggage, departure-time, meal, cancellation or
+hotel-class constraints become backend-owned group preferences for later turns.
+
 Before emitting a `recommendation`, the service calls the backend's **`POST /internal/plans/validate`**
 (Contract B) and only recommends when the backend says the plan is valid — so a recommended plan also
 passes the backend's `persist_draft` validation. On a backend `valid=false` the service downgrades the
@@ -56,5 +62,6 @@ Outcome → SSE events:
 
 - In-memory run/thread store (no persistence across restarts); production needs a checkpoint store.
 - `Last-Event-ID` resume replays from the in-memory buffer only.
+- Durable preference memory is group-scoped; group-less user-level profile memory is a follow-up.
 - Map-point coordinates come from a small static city lookup (`events.py`).
 - Service-to-service auth is a static bearer token (matches the backend MVP).

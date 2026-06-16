@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Архитектура агента — КудаЕдем</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  :root { --bg:#0e1014; --card:#161922; --ink:#e8edf3; --muted:#9aa6b6; --line:#272c38; --accent:#6c8ebf; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; line-height:1.55; }
+  header { max-width:1180px; margin:0 auto; padding:40px 24px 8px; }
+  h1 { font-size:30px; margin:0 0 6px; }
+  .sub { color:var(--muted); margin:0 0 14px; font-size:15px; }
+  main { max-width:1180px; margin:0 auto; padding:8px 24px 72px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px 24px; margin:22px 0; }
+  h2 { font-size:21px; margin:0 0 4px; }
+  h2 .n { color:var(--accent); font-weight:800; margin-right:8px; }
+  .lead { color:var(--muted); margin:6px 0 6px; font-size:14.5px; }
+  .mermaid { background:#0b0d12; border:1px solid var(--line); border-radius:12px; padding:16px; margin:14px 0 6px; text-align:center; }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; margin:8px 0 0; font-size:13px; color:var(--muted); }
+  .legend span { display:inline-flex; align-items:center; gap:7px; }
+  .sw { width:14px; height:14px; border-radius:4px; border:1px solid #0006; display:inline-block; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; margin-top:12px; }
+  .tile { background:#0f121a; border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .tile h3 { margin:0 0 6px; font-size:15px; }
+  .tile p { margin:0; color:var(--muted); font-size:13.5px; }
+  code { background:#0b0d12; border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:13px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:13.5px; }
+  th,td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#1b1f29; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:999px; font-size:11px; font-weight:700; }
+  .det { background:#3a331c; color:#e6c86a; }
+  .llm { background:#1e2b40; color:#9cc1f0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Архитектура агента планирования путешествий</h1>
+  <p class="sub">Продакшн-версия: <code>final_agent_ranked</code> внутри agent-service. От фронта «КудаЕдем»
+     до LangGraph-графа на GigaChat. Принцип: <b>факты считает код, решение принимает агент.</b></p>
+  <div class="legend">
+    <span><i class="sw" style="background:#dae8fc"></i>LLM-узел (GigaChat)</span>
+    <span><i class="sw" style="background:#ffe6cc"></i>детерминированный код (факты/правила)</span>
+    <span><i class="sw" style="background:#d5e8d4"></i>данные · RAG · Contract B</span>
+    <span><i class="sw" style="background:#e1d5e7"></i>критик / рефлексия</span>
+    <span><i class="sw" style="background:#f8cecc"></i>внешний сервис</span>
+  </div>
+</header>
+
+<main>
+
+  <section>
+    <h2><span class="n">1</span>Системный ландшафт (три сервиса)</h2>
+    <p class="lead">Фронт говорит только с бэкендом. Бэкенд (BFF) владеет данными и драйвит агента по
+       <b>Contract A</b>. Агент тянет бизнес-данные обратно по <b>Contract B</b> (Variant B) и предлагает
+       черновик плана — сохраняет его бэкенд.</p>
+    <div class="mermaid">
+flowchart LR
+  FE["Frontend · Vue 3 «КудаЕдем»<br/>чат · карта · план"] -->|"REST + SSE /api/v1 (JWT)"| BE["Backend BFF · FastAPI<br/>users · sessions · plans · business DB"]
+  BE -->|"Contract A: POST /v1/runs → SSE события"| AS["Agent Service · FastAPI :8001<br/>runs · стрим · thread-память"]
+  AS -.->|"Contract B: /internal/* данные · validate · memory"| BE
+  AS --> GR["LangGraph (final_agent_ranked)<br/>GigaChat + RAG/Chroma"]
+  BE --> DB[("business DB<br/>офферы · группы · планы")]
+  classDef ext fill:#f8cecc,stroke:#b85450,color:#111;
+  classDef svc fill:#dae8fc,stroke:#6c8ebf,color:#111;
+  classDef data fill:#d5e8d4,stroke:#82b366,color:#111;
+  class FE,BE ext; class AS,GR svc; class DB data;
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">2</span>Граф агента (сердце системы)</h2>
+    <p class="lead">Один LangGraph-граф. Слева — «быстрые» ветки (вопрос о правилах, болталка, уточнение
+       направления). Справа — основной конвейер подбора: специалисты находят офферы, детерминированный
+       <span class="pill det">feasibility</span> считает факты, а <span class="pill llm">Supervisor/Critic</span>
+       выбирают исход по этим фактам.</p>
+    <div class="mermaid">
+flowchart TD
+  S((запрос)) --> RES["resolve [det]<br/>тип запроса · направление/вылет из переписки · даты/бюджет"]
+  RES -->|вопрос о правилах| PI["policy_info (LLM)<br/>RAG-ответ по правилам"]
+  RES -->|болталка / вне темы| DI["direct_info [det]<br/>короткий ответ"]
+  RES -->|нет направления/вылета| CL["clarify [det]<br/>вопрос С ВАРИАНТАМИ из каталога"]
+  RES -->|группа ИЛИ направление+вылет| LC["load_context<br/>данные Contract B + RAG-политики"]
+  PI --> E(("ответ → SSE"))
+  DI --> E
+  CL --> E
+  LC --> INT["intent (LLM)<br/>бюджет из запроса · риск · тип"]
+  INT --> FL["FlightAgent (LLM)<br/>ranked_candidates"]
+  FL --> HT["HotelAgent (LLM)<br/>ranked_candidates"]
+  HT --> TR["TourAgent (LLM)<br/>ranked_candidates"]
+  TR --> PO["PolicyAgent (LLM) · RAG<br/>риск визы/документов"]
+  PO --> FE["feasibility [det] — КАЛЬКУЛЯТОР ФАКТОВ<br/>стоимость (без двойного счёта тура) · бюджет<br/>structural_violations · chosen-атрибуты"]
+  FE --> SUP["Supervisor (LLM)<br/>выбирает outcome по фактам + порядок решения"]
+  SUP --> FIN["FinalJsonAgent (LLM)<br/>строгая схема + plan-блок"]
+  FIN --> CR["Critic (LLM)<br/>сверяет исход с фактами"]
+  CR -.->|рассогласовано · replan ×2| SUP
+  CR -->|ok| E
+  classDef llm fill:#dae8fc,stroke:#6c8ebf,color:#111;
+  classDef det fill:#ffe6cc,stroke:#d79b00,color:#111;
+  classDef data fill:#d5e8d4,stroke:#82b366,color:#111;
+  classDef crit fill:#e1d5e7,stroke:#9673a6,color:#111;
+  classDef term fill:#f5f5f5,stroke:#666,color:#111;
+  class RES,DI,CL,FE det; class PI,INT,FL,HT,TR,PO,SUP,FIN llm; class LC data; class CR crit; class S,E term;
+    </div>
+    <div class="grid">
+      <div class="tile"><h3>resolve [det]</h3><p>Определяет тип запроса (подбор / вопрос о правилах / болталка) и для чата без группы вытаскивает направление, город вылета, даты и бюджет из всей переписки (каталог + LLM-извлечение фактов).</p></div>
+      <div class="tile"><h3>специалисты (LLM)</h3><p>Flight/Hotel/Tour агенты <b>ранжируют реальные офферы</b> (ranked_candidates со score). Код берёт первый id, который существует в данных — защита от галлюцинаций.</p></div>
+      <div class="tile"><h3>feasibility [det]</h3><p>Детерминированный калькулятор: суммарная стоимость (без двойного счёта пакетного тура), бюджет (из запроса приоритетнее), нарушения и атрибуты выбранного плана (прямой? звёзды? багаж?). <b>Факты, не решение.</b></p></div>
+      <div class="tile"><h3>supervisor / critic (LLM)</h3><p>Решают тип исхода <i>по фактам</i> и порядку (info → escalation → recommendation-если-в-бюджете → clarification → rejection). Критик ловит рассогласование и отправляет на переделку (до 2 раз).</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">3</span>Жизненный цикл прогона и события (Contract A)</h2>
+    <p class="lead">Бэкенд открывает run, агент стримит семантические SSE-события. Исход графа маппится
+       в события, которые бэкенд валидирует и превращает в план/сообщение/вопрос для фронта.</p>
+    <table>
+      <tr><th>Исход агента</th><th>SSE-события Contract A</th></tr>
+      <tr><td><b>recommendation</b></td><td><code>plan_status: building</code> → <code>plan</code> (DraftPlan: id + точки карты) → <code>plan_status: ready</code> → <code>run_status: completed</code></td></tr>
+      <tr><td><b>clarification</b></td><td><code>clarifying_question</code> (закрытые варианты + свободный ввод) → <code>run_status</code></td></tr>
+      <tr><td><b>rejection</b></td><td><code>constraints_conflict</code> + suggested_relaxations → <code>run_status</code> (outcome=constraints_conflict)</td></tr>
+      <tr><td><b>escalation</b></td><td><code>escalation</code> (reason) → <code>run_status</code></td></tr>
+      <tr><td><b>info</b></td><td><code>message</code> → <code>run_status</code></td></tr>
+    </table>
+    <p class="lead" style="margin-top:12px"><b>Гарантия безопасности плана:</b> перед <code>recommendation</code>
+       сервис вызывает у бэкенда <code>POST /internal/plans/validate</code> (Contract B) и <b>никогда не fail-open</b>
+       — если валидация недоступна или план невалиден, исход понижается до <code>clarification</code>. Так
+       рекомендация всегда проходит финальную проверку бэкенда при сохранении.</p>
+  </section>
+
+  <section>
+    <h2><span class="n">4</span>Ключевые принципы</h2>
+    <div class="grid">
+      <div class="tile"><h3>Факты — код, решение — агент</h3><p>Арифметику бюджета и проверки считает детерминированный калькулятор (LLM врёт в числах). Тип исхода выбирает LLM <i>на основе этих фактов</i>. Это дало стабильный outcome.</p></div>
+      <div class="tile"><h3>Entity ⟂ outcome</h3><p>Найденные специалистами id переносятся в ответ <b>независимо</b> от типа исхода — поэтому entity = 1.0 даже при clarification/escalation.</p></div>
+      <div class="tile"><h3>Ranked-выбор офферов</h3><p>Продовый вариант доверяет <b>ранжирование</b> офферов LLM (тоньше понимает «комфортный», «без лишних пересадок»); код лишь отсекает несуществующие id.</p></div>
+      <div class="tile"><h3>Доменные знания в RAG</h3><p>Правила эскалации/уточнения/багажа/детей — в policy-документах (Chroma), а не зашиты в промпт. Это убрало подгонку под тест-кейсы.</p></div>
+      <div class="tile"><h3>Чат без группы</h3><p>Направление/вылет/даты резолвятся из переписки по каталогу; если неоднозначно — закрытый вопрос с вариантами, а не зацикливание.</p></div>
+      <div class="tile"><h3>Память</h3><p>Рабочая память — весь транскрипт в один проход графа. Долговременная — MemoryAgent пишет устойчивые предпочтения в группу через Contract B.</p></div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  mermaid.initialize({ startOnLoad:true, theme:"dark", securityLevel:"loose",
+                       flowchart:{ curve:"basis", useMaxWidth:true } });
+</script>
+</body>
+</html>

@@ -42,10 +42,10 @@ labels are unavailable.
 | Decision | Choice |
 |---|---|
 | Agent state | In-memory run/thread store for MVP; backend sends new turns with `thread_id`. Runs, threads, and per-run SSE event buffers are retained for the process lifetime (no eviction yet) so streams can be reconnected via `Last-Event-ID`; size-bounded retention and persistent LangGraph checkpoints are a follow-up. |
-| Data access | Agent owns policy RAG and local experimental graph data access; recommendation drafts are validated via Backend Contract B. |
+| Data access | Agent owns policy RAG and calls Backend Contract B for business data, plan validation, and durable preference-memory writes. |
 | Run model | **Two-call**: `POST /v1/runs` → `stream_url`, then `GET /v1/runs/{id}/stream` (SSE). |
 | Event vocabulary | **Stable semantic events** + one optional `observability` event (raw LangGraph steps). |
-| Persistence | **Agent proposes, backend disposes** — Contract B is read-only. |
+| Persistence | **Agent proposes, backend disposes** — plans are never written by the agent; the only write-tool is durable preference memory, persisted by the backend. |
 | Inter-service auth | **Shared service tokens** (Bearer), private network; optional scopes. |
 
 ## 3. Contract A — Agent Service API (`/v1`)
@@ -103,6 +103,14 @@ not in the catalogue (or a country with several catalogue cities, or a missing d
 produces a `clarifying_question` whose `options` list the destinations/cities the agent can actually
 plan — closed options, not freeform-only.
 
+**Durable preference memory.** For runs with a `group_id`, the service also runs a lightweight
+`MemoryAgent` before planning. It extracts only stable travel preferences from the latest user turn
+(for example “usually avoid early departures”, “baggage is mandatory”, “prefer breakfast”), filters
+low-confidence or one-off trip facts, and writes the result through
+`POST /internal/groups/{group_id}/preferences`. The backend owns deduplication and persistence, so
+the next `GET /internal/groups/{group_id}/context` includes the saved memories as ordinary group
+preferences.
+
 A `message` event is emitted **only for the `info` outcome**. For every structured outcome the
 backend already produces the user-facing assistant message itself (the plan-ready message for
 `recommendation`, the question text for `clarification`, and the localized escalation/conflict text
@@ -112,11 +120,13 @@ bubble, identical text for clarifications).
 
 ## 4. Contract B — Backend Internal Tool API (`/internal`)
 
-Read-only business data + validation for the agent. **The agent never writes here.**
+Business data + validation + scoped memory tools for the agent. **The agent never writes plans or
+inventory here**; it may only ask the backend to persist durable preference memories.
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /internal/groups/{group_id}/context` | Group trip fields + members + preferences + history summary. |
+| `POST /internal/groups/{group_id}/preferences` | Save durable preference memories extracted by `MemoryAgent`; backend deduplicates. |
 | `POST /internal/flights/search` | Flight offers matching origin/destination/constraints. |
 | `POST /internal/hotels/search` | Hotel offers matching destination/dates/constraints. |
 | `POST /internal/tours/search` | Package-tour offers. |
@@ -160,12 +170,14 @@ npx @redocly/cli preview-docs agent-service/openapi.yaml   # interactive docs
 
 ## 8. Open items
 
-- Multi-turn memory is currently the full transcript threaded into a single-shot graph; persistent
-  LangGraph checkpoints (below) would let the graph keep structured state across turns instead.
+- Multi-turn working memory is the full transcript threaded into a single-shot graph; durable
+  preference memory is persisted in backend group preferences. Persistent LangGraph checkpoints
+  would still help keep richer structured state across turns.
 - The destination catalogue ([`travel_catalog.py`](../agent/baselines/travel_catalog.py)) is hardcoded
   to the seed dataset; derive it from Contract B (e.g. a `/internal/destinations` endpoint) once the
   Final graph reads offers over HTTP.
-- Replace local CSV access inside the experimental Final graph with HTTP tools over Contract B.
+- Continue replacing any remaining local CSV fallback inside the experimental Final graph with HTTP
+  tools over Contract B.
 - Persistent LangGraph checkpoints instead of the current in-memory run/thread store.
 - mTLS / service-to-service JWT with scopes — upgrade from static tokens after the prototype.
 - Plan versioning/history and `eval/*` + `debug/*` ops endpoints — separate specs.
